@@ -4,7 +4,7 @@ use adw::prelude::*;
 use adw::{Application, ApplicationWindow, HeaderBar, ToolbarView};
 use gtk::{Align, Orientation};
 
-use crate::collectors::{cpu, memory};
+use crate::collectors::{cpu, memory, network};
 
 const REFRESH_INTERVAL_SECONDS: u32 = 1;
 
@@ -20,6 +20,9 @@ pub fn activate(application: &Application) {
     let memory_label = gtk::Label::new(None);
     memory_label.set_halign(Align::Start);
     memory_label.set_selectable(true);
+    let network_label = gtk::Label::new(None);
+    network_label.set_halign(Align::Start);
+    network_label.set_selectable(true);
 
     let content = gtk::Box::new(Orientation::Vertical, 12);
     content.set_margin_top(24);
@@ -29,10 +32,15 @@ pub fn activate(application: &Application) {
     content.append(&title);
     content.append(&cpu_label);
     content.append(&memory_label);
+    content.append(&network_label);
+
+    let scrolled = gtk::ScrolledWindow::new();
+    scrolled.set_vexpand(true);
+    scrolled.set_child(Some(&content));
 
     let toolbar = ToolbarView::new();
     toolbar.add_top_bar(&HeaderBar::new());
-    toolbar.set_content(Some(&content));
+    toolbar.set_content(Some(&scrolled));
     let window = ApplicationWindow::builder()
         .application(application)
         .title("GAMEMON")
@@ -42,16 +50,33 @@ pub fn activate(application: &Application) {
         .build();
 
     let collector = Rc::new(RefCell::new(cpu::CpuCollector::default()));
-    refresh(&collector, &cpu_label, &memory_label);
+    let network_collector = Rc::new(RefCell::new(network::NetworkCollector::default()));
+    refresh(
+        &collector,
+        &network_collector,
+        &cpu_label,
+        &memory_label,
+        &network_label,
+    );
 
     let cpu_label = cpu_label.downgrade();
     let memory_label = memory_label.downgrade();
+    let network_label = network_label.downgrade();
     gtk::glib::timeout_add_seconds_local(REFRESH_INTERVAL_SECONDS, move || {
-        let (Some(cpu_label), Some(memory_label)) = (cpu_label.upgrade(), memory_label.upgrade())
-        else {
+        let (Some(cpu_label), Some(memory_label), Some(network_label)) = (
+            cpu_label.upgrade(),
+            memory_label.upgrade(),
+            network_label.upgrade(),
+        ) else {
             return gtk::glib::ControlFlow::Break;
         };
-        refresh(&collector, &cpu_label, &memory_label);
+        refresh(
+            &collector,
+            &network_collector,
+            &cpu_label,
+            &memory_label,
+            &network_label,
+        );
         gtk::glib::ControlFlow::Continue
     });
 
@@ -60,8 +85,10 @@ pub fn activate(application: &Application) {
 
 fn refresh(
     collector: &Rc<RefCell<cpu::CpuCollector>>,
+    network_collector: &Rc<RefCell<network::NetworkCollector>>,
     cpu_label: &gtk::Label,
     memory_label: &gtk::Label,
+    network_label: &gtk::Label,
 ) {
     let cpu = collector.borrow_mut().sample();
     let model = cpu.model.as_deref().unwrap_or("Niet beschikbaar");
@@ -118,6 +145,82 @@ fn refresh(
         format_memory_pressure(memory.pressure),
     );
     memory_label.set_text(&memory_text);
+
+    let network = network_collector.borrow_mut().sample();
+    let network_text = match network {
+        None => "Netwerk\nNiet beschikbaar".to_owned(),
+        Some(snapshot) if snapshot.interfaces.is_empty() => {
+            "Netwerk\nGeen interfaces gevonden".to_owned()
+        }
+        Some(snapshot) => format!(
+            "Netwerk\n{}",
+            snapshot
+                .interfaces
+                .iter()
+                .map(format_network_interface)
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    };
+    network_label.set_text(&network_text);
+}
+
+fn format_network_interface(interface: &network::NetworkInterfaceSnapshot) -> String {
+    let state = interface
+        .operational_state
+        .as_deref()
+        .unwrap_or("state n.b.");
+    let carrier = match interface.carrier {
+        Some(true) => "carrier on",
+        Some(false) => "carrier off",
+        None => "carrier n.b.",
+    };
+    let speed = interface
+        .speed_mbps
+        .map(|value| format!("{value} Mbps"))
+        .unwrap_or_else(|| "speed n.b.".to_owned());
+    let duplex = interface.duplex.as_deref().unwrap_or("duplex n.b.");
+    format!(
+        "{} · {state}, {carrier} · {speed} {duplex}\n  ↓ {} ({} total, {} errors, {} drops) · ↑ {} ({} total, {} errors, {} drops)",
+        interface.name,
+        format_data_rate(interface.rx_bytes_per_second),
+        format_optional_data_size(interface.rx_bytes),
+        format_optional_count(interface.rx_errors),
+        format_optional_count(interface.rx_dropped),
+        format_data_rate(interface.tx_bytes_per_second),
+        format_optional_data_size(interface.tx_bytes),
+        format_optional_count(interface.tx_errors),
+        format_optional_count(interface.tx_dropped),
+    )
+}
+
+fn format_data_rate(value: Option<f64>) -> String {
+    match value {
+        Some(bytes) if bytes >= 1_048_576.0 => format!("{:.1} MiB/s", bytes / 1_048_576.0),
+        Some(bytes) if bytes >= 1024.0 => format!("{:.1} KiB/s", bytes / 1024.0),
+        Some(bytes) => format!("{bytes:.0} B/s"),
+        None => "Meten…".to_owned(),
+    }
+}
+
+fn format_optional_data_size(value: Option<u64>) -> String {
+    match value {
+        Some(bytes) if bytes >= 1_073_741_824 => {
+            format!("{:.1} GiB", bytes as f64 / 1_073_741_824.0)
+        }
+        Some(bytes) if bytes >= 1_048_576 => {
+            format!("{:.1} MiB", bytes as f64 / 1_048_576.0)
+        }
+        Some(bytes) if bytes >= 1024 => format!("{:.1} KiB", bytes as f64 / 1024.0),
+        Some(bytes) => format!("{bytes} B"),
+        None => "n.b.".to_owned(),
+    }
+}
+
+fn format_optional_count(value: Option<u64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "n.b.".to_owned())
 }
 
 fn format_cpu_utilization(utilization: cpu::CpuUtilization) -> String {

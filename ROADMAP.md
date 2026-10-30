@@ -17,7 +17,7 @@ The Rust application is the primary development target. The former Bash monitor 
 - [ ] NVIDIA telemetry through NVML, with controlled fallback.
 - [ ] AMD and Intel GPU telemetry through supported DRM interfaces.
 - [ ] Storage and NVMe telemetry.
-- [ ] Network throughput and interface counters.
+- [x] Network interface status/counters, throughput rates, errors and drops.
 - [ ] Motherboard temperatures and fan telemetry through hwmon.
 - [ ] PCIe, USB, audio and display inventory.
 
