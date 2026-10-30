@@ -10,8 +10,10 @@ The Rust application is the primary development target. The former Bash monitor 
 - [ ] Complete hardware inventory and approve final data model.
 
 ## Telemetry
-- [ ] CPU topology, utilization, frequency, temperature, power and idle states.
-- [ ] Memory, swap and PSI.
+- [x] CPU identity, online CPU range and aggregate utilization.
+- [ ] CPU topology, frequency, temperature, power and idle states.
+- [x] RAM capacity and available/used memory.
+- [ ] Swap and PSI.
 - [ ] NVIDIA telemetry through NVML, with controlled fallback.
 - [ ] AMD and Intel GPU telemetry through supported DRM interfaces.
 - [ ] Storage and NVMe telemetry.
@@ -27,7 +29,8 @@ The Rust application is the primary development target. The former Bash monitor 
 - [ ] RHEL 10 RPM packaging and lifecycle tests.
 
 ## Quality
-- [ ] Unit and integration tests for collectors.
+- [x] Parser unit tests for initial CPU and memory collectors.
+- [ ] Unit and integration tests for remaining collectors.
 - [ ] Missing/unsupported/permission-denied sensor tests.
 - [ ] Compare readings against Linux tools and archived Bash monitor.
 - [ ] Measure CPU and memory overhead.

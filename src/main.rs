@@ -1,6 +1,6 @@
 mod app;
-mod collectors;
-mod core;
+pub mod collectors;
+pub mod core;
 
 use adw::prelude::*;
 use tracing_subscriber::EnvFilter;

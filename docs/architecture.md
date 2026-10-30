@@ -10,7 +10,7 @@
 Collectors discover hardware at runtime, distinguish unavailable/unsupported/invalid/permission-denied data, return source metadata and timestamps, avoid blocking the UI thread, never write to hardware controls, and never infer undocumented sensor labels or calibration from channel numbers.
 
 ## Initial implementation
-The initial Rust shell reads CPU model/online CPU range from procfs/sysfs and RAM capacity/availability from /proc/meminfo. Sampling history, topology classification and background polling will be introduced separately.
+The initial collectors read CPU model and online CPU range from procfs/sysfs, aggregate CPU counters from `/proc/stat`, and RAM capacity/availability from `/proc/meminfo`. CPU utilization is computed from deltas between successful aggregate counter samples; the first sample establishes a baseline. The GTK application polls these collectors on a two-second GLib timer and displays missing or malformed readings as unavailable. The timer holds weak widget references and ends when the window widgets are gone. Further topology classification, sampling history and collectors remain separate follow-up work.
 
 ## Permissions
 GAMEMON is designed for ordinary-user operation. Optional privileged telemetry must be isolated and documented; the main application must never require unrestricted root execution.

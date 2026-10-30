@@ -4,7 +4,7 @@ GAMEMON is a Linux hardware-monitoring application migrating from its original B
 
 ## Status
 
-The Rust application is under active development. This initial migration establishes the application structure and basic CPU identity/online-CPU and memory discovery. Telemetry will be added incrementally and validated across different hardware and kernel/driver combinations.
+The Rust application is under active development. It currently discovers CPU identity and online logical CPUs, samples aggregate CPU utilization, and reports RAM use. CPU and memory values refresh every two seconds. Missing or malformed procfs/sysfs data is displayed as unavailable; CPU utilization is shown after the second successful sample.
 
 The original Bash implementation is preserved at legacy/bash/gamemon as a historical reference and comparison baseline. It is no longer the primary application target.
 
@@ -25,6 +25,8 @@ Requirements: Rust/Cargo, GTK4 development files and libadwaita development file
 cargo build
 cargo run
 ```
+
+Run the collector unit tests with `cargo test`.
 
 On RHEL, install matching GTK4 and libadwaita development packages from enabled repositories before building.
 
