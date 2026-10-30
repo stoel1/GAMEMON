@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added physical-core counting using Linux CPU topology sysfs.
+- Added Intel hybrid P-core/E-core classification when `topology/core_type` is exposed; other CPUs retain generic topology reporting.
+
 - Added runtime discovery of online logical CPUs; removed fixed 32-thread display assumptions.
 - Added generic CPU temperature label handling for Intel and common AMD/ARM hwmon drivers.
 - Added dynamic multi-GPU NVIDIA reporting and best-effort AMD/Intel DRM sysfs telemetry.
