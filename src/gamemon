@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
 # ============================================================
-# GAMEMON - RHEL 10
-# Intel Core i9-13900K / ASRock Z790 LiveMixer
-# NVIDIA GeForce RTX 5070
+# GAMEMON - Linux hardware monitor
+# Dynamic CPU, memory and GPU discovery
+# Motherboard sensors depend on the active hwmon driver
 # ============================================================
 
 set -u
@@ -548,7 +548,7 @@ render() {
     # NVIDIA GPU
     # --------------------------------------------------------
 
-    put "NVIDIA GPU"
+    put "GRAPHICS / GPU"
 
     for line in "${GPU_LINES[@]}"; do put "$line"; done
 
