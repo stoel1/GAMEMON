@@ -14,6 +14,7 @@ The Rust application is the primary development target. The former Bash monitor 
 - [ ] Hybrid core classification, temperature, power, throttling and idle states.
 - [x] RAM capacity, available/free memory, buffers and cache.
 - [x] Swap, memory PSI and HugePages when exported by the kernel.
+- [x] Dynamic DRM device inventory and exported busy/VRAM attributes.
 - [ ] NVIDIA telemetry through NVML, with controlled fallback.
 - [ ] AMD and Intel GPU telemetry through supported DRM interfaces.
 - [ ] Storage and NVMe telemetry.

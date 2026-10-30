@@ -5,7 +5,7 @@ use adw::{Application, ApplicationWindow, HeaderBar, ToolbarView};
 use gtk::{Align, Orientation};
 
 use crate::{
-    collectors::{cpu, memory, network},
+    collectors::{cpu, gpu, memory, network},
     core::{
         config::AppConfig,
         sampler::{self, MonitorSnapshot, SamplerConfig},
@@ -23,6 +23,9 @@ pub fn activate(application: &Application) {
     let cpu_label = gtk::Label::new(Some("CPU\nMeten…"));
     cpu_label.set_halign(Align::Start);
     cpu_label.set_selectable(true);
+    let gpu_label = gtk::Label::new(Some("GPU\nDetecteren…"));
+    gpu_label.set_halign(Align::Start);
+    gpu_label.set_selectable(true);
     let memory_label = gtk::Label::new(Some("Geheugen\nMeten…"));
     memory_label.set_halign(Align::Start);
     memory_label.set_selectable(true);
@@ -37,6 +40,7 @@ pub fn activate(application: &Application) {
     content.set_margin_end(24);
     content.append(&title);
     content.append(&cpu_label);
+    content.append(&gpu_label);
     content.append(&memory_label);
     content.append(&network_label);
 
@@ -60,11 +64,13 @@ pub fn activate(application: &Application) {
         interval: config.refresh_interval(),
     });
     let cpu_label = cpu_label.downgrade();
+    let gpu_label = gpu_label.downgrade();
     let memory_label = memory_label.downgrade();
     let network_label = network_label.downgrade();
     gtk::glib::timeout_add_local(UI_POLL_INTERVAL, move || {
-        let (Some(cpu_label), Some(memory_label), Some(network_label)) = (
+        let (Some(cpu_label), Some(gpu_label), Some(memory_label), Some(network_label)) = (
             cpu_label.upgrade(),
+            gpu_label.upgrade(),
             memory_label.upgrade(),
             network_label.upgrade(),
         ) else {
@@ -78,6 +84,7 @@ pub fn activate(application: &Application) {
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
                     cpu_label.set_text("CPU\nSampling niet beschikbaar");
+                    gpu_label.set_text("GPU\nSampling niet beschikbaar");
                     memory_label.set_text("Geheugen\nSampling niet beschikbaar");
                     network_label.set_text("Netwerk\nSampling niet beschikbaar");
                     return gtk::glib::ControlFlow::Break;
@@ -85,7 +92,13 @@ pub fn activate(application: &Application) {
             }
         }
         if let Some(snapshot) = latest {
-            render_snapshot(&snapshot, &cpu_label, &memory_label, &network_label);
+            render_snapshot(
+                &snapshot,
+                &cpu_label,
+                &gpu_label,
+                &memory_label,
+                &network_label,
+            );
         }
         gtk::glib::ControlFlow::Continue
     });
@@ -96,6 +109,7 @@ pub fn activate(application: &Application) {
 fn render_snapshot(
     snapshot: &MonitorSnapshot,
     cpu_label: &gtk::Label,
+    gpu_label: &gtk::Label,
     memory_label: &gtk::Label,
     network_label: &gtk::Label,
 ) {
@@ -139,6 +153,23 @@ fn render_snapshot(
         "CPU\n{model}\nOnline logical CPU's: {online}\nTotaal gebruik: {utilization}\n{logical_cpu_lines}"
     ));
 
+    let gpu_text = match &snapshot.gpu {
+        None => "GPU\nNiet beschikbaar".to_owned(),
+        Some(snapshot) if snapshot.devices.is_empty() => {
+            "GPU\nGeen DRM-apparaten gevonden".to_owned()
+        }
+        Some(snapshot) => format!(
+            "GPU\n{}",
+            snapshot
+                .devices
+                .iter()
+                .map(format_gpu_device)
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    };
+    gpu_label.set_text(&gpu_text);
+
     let memory = snapshot.memory;
     let memory_text = format!(
         "Geheugen\nRAM gebruikt: {} / {}\nBeschikbaar: {} · Vrij: {}\nBuffers: {} · Cache: {}\nSwap gebruikt: {} / {} (vrij {})\nHugePages: {}\nMemory PSI: {}",
@@ -172,6 +203,36 @@ fn render_snapshot(
         ),
     };
     network_label.set_text(&network_text);
+}
+
+fn format_gpu_device(device: &gpu::GpuDeviceSnapshot) -> String {
+    let name = device
+        .model
+        .as_deref()
+        .map(str::to_owned)
+        .or_else(|| match (device.vendor_id, device.device_id) {
+            (Some(vendor), Some(product)) => Some(format!("PCI {vendor:#06x}:{product:#06x}")),
+            _ => None,
+        })
+        .unwrap_or_else(|| "GPU-model niet beschikbaar".to_owned());
+    let pci_address = device.pci_address.as_deref().unwrap_or("PCI-adres n.b.");
+    let driver = device.driver.as_deref().unwrap_or("driver n.b.");
+    let utilization = device
+        .gpu_busy_percent
+        .map(|value| format!("{value}%"))
+        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
+    let vram = match (device.vram_used_bytes, device.vram_total_bytes) {
+        (Some(used), Some(total)) => format!(
+            "{} / {}",
+            format_optional_bytes(Some(used)),
+            format_optional_bytes(Some(total))
+        ),
+        _ => "Niet beschikbaar".to_owned(),
+    };
+    format!(
+        "{} · {pci_address} · {driver}\n  Belasting: {utilization} · VRAM: {vram} · temperatuur: Niet beschikbaar",
+        name
+    )
 }
 
 fn format_cpu_utilization(utilization: cpu::CpuUtilization) -> String {

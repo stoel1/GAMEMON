@@ -15,5 +15,6 @@
 - Added read-only network interface status, link attributes, byte rates and RX/TX error/drop counters.
 - Moved hardware polling to a background sampler with bounded snapshot delivery to the UI.
 - Added a user-level TOML setting for refresh interval with safe 100 ms–60 s bounds.
+- Added dynamic DRM GPU inventory and optional driver-exported load and VRAM readings.
 
 The Rust migration is not a stable release. The archived Bash implementation remains available as a comparison baseline.
