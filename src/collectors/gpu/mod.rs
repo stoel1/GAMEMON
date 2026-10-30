@@ -4,6 +4,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod nvml;
+
+use nvml::{DeviceMetrics as NvmlMetrics, NvmlApi};
+
 const DEVICE_RESCAN_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Default)]
@@ -13,7 +17,8 @@ pub struct GpuSnapshot {
 
 #[derive(Debug, Clone)]
 pub struct GpuDeviceSnapshot {
-    pub drm_card: String,
+    pub drm_card: Option<String>,
+    pub uuid: Option<String>,
     pub pci_address: Option<String>,
     pub vendor_id: Option<u16>,
     pub device_id: Option<u16>,
@@ -22,6 +27,15 @@ pub struct GpuDeviceSnapshot {
     pub gpu_busy_percent: Option<u8>,
     pub vram_used_bytes: Option<u64>,
     pub vram_total_bytes: Option<u64>,
+    pub memory_busy_percent: Option<u8>,
+    pub temperature_celsius: Option<u32>,
+    pub power_milliwatts: Option<u32>,
+    pub power_limit_milliwatts: Option<u32>,
+    pub graphics_clock_mhz: Option<u32>,
+    pub memory_clock_mhz: Option<u32>,
+    pub fan_percent: Option<u8>,
+    pub encoder_busy_percent: Option<u8>,
+    pub decoder_busy_percent: Option<u8>,
 }
 
 #[derive(Debug, Clone)]
@@ -30,10 +44,12 @@ struct DiscoveredDevice {
     device_path: PathBuf,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct GpuCollector {
     devices: Option<Vec<DiscoveredDevice>>,
     last_discovery: Option<Instant>,
+    nvml: Option<NvmlApi>,
+    last_nvml_attempt: Option<Instant>,
 }
 
 impl GpuCollector {
@@ -54,9 +70,20 @@ impl GpuCollector {
         }
 
         let devices = self.devices.as_ref()?;
-        Some(GpuSnapshot {
-            devices: devices.iter().map(read_device_snapshot).collect(),
-        })
+        let mut devices = devices.iter().map(read_device_snapshot).collect::<Vec<_>>();
+        if self
+            .last_nvml_attempt
+            .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(30))
+        {
+            self.last_nvml_attempt = Some(now);
+            self.nvml = NvmlApi::load();
+        }
+        if let Some(nvml) = &self.nvml {
+            for metrics in nvml.sample() {
+                merge_nvml_device(&mut devices, metrics);
+            }
+        }
+        Some(GpuSnapshot { devices })
     }
 }
 
@@ -109,7 +136,8 @@ fn read_device_snapshot(device: &DiscoveredDevice) -> GpuDeviceSnapshot {
     let (vram_used_bytes, vram_total_bytes) = validate_vram(vram_used_bytes, vram_total_bytes);
 
     GpuDeviceSnapshot {
-        drm_card: device.drm_card.clone(),
+        drm_card: Some(device.drm_card.clone()),
+        uuid: None,
         pci_address,
         vendor_id,
         device_id,
@@ -118,7 +146,79 @@ fn read_device_snapshot(device: &DiscoveredDevice) -> GpuDeviceSnapshot {
         gpu_busy_percent,
         vram_used_bytes,
         vram_total_bytes,
+        memory_busy_percent: None,
+        temperature_celsius: None,
+        power_milliwatts: None,
+        power_limit_milliwatts: None,
+        graphics_clock_mhz: None,
+        memory_clock_mhz: None,
+        fan_percent: None,
+        encoder_busy_percent: None,
+        decoder_busy_percent: None,
     }
+}
+
+fn merge_nvml_device(devices: &mut Vec<GpuDeviceSnapshot>, metrics: NvmlMetrics) {
+    let pci_address = metrics
+        .pci_address
+        .as_deref()
+        .and_then(normalize_pci_address);
+    let existing_index = pci_address.as_ref().and_then(|address| {
+        devices.iter().position(|device| {
+            device
+                .pci_address
+                .as_deref()
+                .and_then(normalize_pci_address)
+                .as_ref()
+                == Some(address)
+        })
+    });
+    let device = match existing_index {
+        Some(index) => &mut devices[index],
+        None => {
+            devices.push(GpuDeviceSnapshot {
+                drm_card: None,
+                uuid: None,
+                pci_address: pci_address.clone(),
+                vendor_id: Some(0x10de),
+                device_id: None,
+                driver: Some("NVML".to_owned()),
+                model: None,
+                gpu_busy_percent: None,
+                vram_used_bytes: None,
+                vram_total_bytes: None,
+                memory_busy_percent: None,
+                temperature_celsius: None,
+                power_milliwatts: None,
+                power_limit_milliwatts: None,
+                graphics_clock_mhz: None,
+                memory_clock_mhz: None,
+                fan_percent: None,
+                encoder_busy_percent: None,
+                decoder_busy_percent: None,
+            });
+            devices.last_mut().expect("device was just appended")
+        }
+    };
+    if device.pci_address.is_none() {
+        device.pci_address = pci_address;
+    }
+    device.uuid = metrics.uuid;
+    device.vendor_id = Some(0x10de);
+    device.driver = Some("NVML".to_owned());
+    device.model = metrics.name.or(device.model.take());
+    device.gpu_busy_percent = metrics.gpu_busy_percent.or(device.gpu_busy_percent);
+    device.vram_used_bytes = metrics.vram_used_bytes.or(device.vram_used_bytes);
+    device.vram_total_bytes = metrics.vram_total_bytes.or(device.vram_total_bytes);
+    device.memory_busy_percent = metrics.memory_busy_percent;
+    device.temperature_celsius = metrics.temperature_celsius;
+    device.power_milliwatts = metrics.power_milliwatts;
+    device.power_limit_milliwatts = metrics.power_limit_milliwatts;
+    device.graphics_clock_mhz = metrics.graphics_clock_mhz;
+    device.memory_clock_mhz = metrics.memory_clock_mhz;
+    device.fan_percent = metrics.fan_percent;
+    device.encoder_busy_percent = metrics.encoder_busy_percent;
+    device.decoder_busy_percent = metrics.decoder_busy_percent;
 }
 
 fn read_text(path: &Path) -> Option<String> {
@@ -136,11 +236,19 @@ fn parse_pci_address(uevent: &str) -> Option<String> {
     let address = uevent
         .lines()
         .find_map(|line| line.strip_prefix("PCI_SLOT_NAME="))?;
-    (address.len() <= 16
-        && address
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() || b":.".contains(&byte)))
-    .then(|| address.to_owned())
+    normalize_pci_address(address)
+}
+
+fn normalize_pci_address(address: &str) -> Option<String> {
+    let (domain, rest) = address.split_once(':')?;
+    let (bus, rest) = rest.split_once(':')?;
+    let (device, function) = rest.split_once('.')?;
+    let domain = u32::from_str_radix(domain, 16).ok()?;
+    let bus = u8::from_str_radix(bus, 16).ok()?;
+    let device = u8::from_str_radix(device, 16).ok()?;
+    let function = u8::from_str_radix(function, 16).ok()?;
+    (device <= 31 && function <= 7)
+        .then(|| format!("{domain:04x}:{bus:02x}:{device:02x}.{function}"))
 }
 
 fn parse_percent(value: &str) -> Option<u8> {
@@ -186,6 +294,13 @@ mod tests {
             Some("0000:01:00.0")
         );
         assert_eq!(parse_pci_address("PCI_SLOT_NAME=../../etc/passwd\n"), None);
+        assert_eq!(
+            normalize_pci_address("1:0A:1f.7").as_deref(),
+            Some("0001:0a:1f.7")
+        );
+        assert_eq!(normalize_pci_address("0000:100:00.0"), None);
+        assert_eq!(normalize_pci_address("0000:01:20.0"), None);
+        assert_eq!(normalize_pci_address("0000:01:00.8"), None);
     }
 
     #[test]

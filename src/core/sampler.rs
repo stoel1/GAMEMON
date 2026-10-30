@@ -30,7 +30,7 @@ pub struct MonitorSnapshot {
     pub network: Option<network::NetworkSnapshot>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct Collectors {
     cpu: cpu::CpuCollector,
     gpu: gpu::GpuCollector,

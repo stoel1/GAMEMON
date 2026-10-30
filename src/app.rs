@@ -217,8 +217,18 @@ fn format_gpu_device(device: &gpu::GpuDeviceSnapshot) -> String {
         .unwrap_or_else(|| "GPU-model niet beschikbaar".to_owned());
     let pci_address = device.pci_address.as_deref().unwrap_or("PCI-adres n.b.");
     let driver = device.driver.as_deref().unwrap_or("driver n.b.");
+    let source = device
+        .drm_card
+        .as_deref()
+        .map(|card| format!("DRM {card}"))
+        .unwrap_or_else(|| "NVML".to_owned());
+    let uuid = device.uuid.as_deref().unwrap_or("UUID n.b.");
     let utilization = device
         .gpu_busy_percent
+        .map(|value| format!("{value}%"))
+        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
+    let memory_utilization = device
+        .memory_busy_percent
         .map(|value| format!("{value}%"))
         .unwrap_or_else(|| "Niet beschikbaar".to_owned());
     let vram = match (device.vram_used_bytes, device.vram_total_bytes) {
@@ -229,9 +239,41 @@ fn format_gpu_device(device: &gpu::GpuDeviceSnapshot) -> String {
         ),
         _ => "Niet beschikbaar".to_owned(),
     };
+    let temperature = device
+        .temperature_celsius
+        .map(|value| format!("{value} °C"))
+        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
+    let power = device
+        .power_milliwatts
+        .map(|value| format!("{:.1} W", value as f64 / 1000.0))
+        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
+    let power_limit = device
+        .power_limit_milliwatts
+        .map(|value| format!("{:.1} W", value as f64 / 1000.0))
+        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
+    let graphics_clock = device
+        .graphics_clock_mhz
+        .map(|value| format!("{value} MHz"))
+        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
+    let memory_clock = device
+        .memory_clock_mhz
+        .map(|value| format!("{value} MHz"))
+        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
+    let fan = device
+        .fan_percent
+        .map(|value| format!("{value}%"))
+        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
+    let encoder = device
+        .encoder_busy_percent
+        .map(|value| format!("{value}%"))
+        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
+    let decoder = device
+        .decoder_busy_percent
+        .map(|value| format!("{value}%"))
+        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
     format!(
-        "{} · {pci_address} · {driver}\n  Belasting: {utilization} · VRAM: {vram} · temperatuur: Niet beschikbaar",
-        name
+        "{} · {source} · {pci_address} · {driver} · {uuid}\n  Belasting: {utilization} · VRAM: {vram} · VRAM-belasting: {memory_utilization}\n  Temperatuur: {temperature} · vermogen: {power} / limiet {power_limit}\n  Klok: {graphics_clock} · geheugenklok: {memory_clock} · ventilator: {fan}\n  Encoder: {encoder} · decoder: {decoder}",
+        name,
     )
 }
 
