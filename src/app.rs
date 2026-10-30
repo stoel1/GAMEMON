@@ -1,12 +1,15 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{sync::mpsc::TryRecvError, time::Duration};
 
 use adw::prelude::*;
 use adw::{Application, ApplicationWindow, HeaderBar, ToolbarView};
 use gtk::{Align, Orientation};
 
-use crate::collectors::{cpu, memory, network};
+use crate::{
+    collectors::{cpu, memory, network},
+    core::sampler::{self, MonitorSnapshot, SamplerConfig},
+};
 
-const REFRESH_INTERVAL_SECONDS: u32 = 1;
+const UI_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 pub fn activate(application: &Application) {
     let title = gtk::Label::builder()
@@ -14,13 +17,13 @@ pub fn activate(application: &Application) {
         .halign(Align::Start)
         .css_classes(["title-1"])
         .build();
-    let cpu_label = gtk::Label::new(None);
+    let cpu_label = gtk::Label::new(Some("CPU\nMeten…"));
     cpu_label.set_halign(Align::Start);
     cpu_label.set_selectable(true);
-    let memory_label = gtk::Label::new(None);
+    let memory_label = gtk::Label::new(Some("Geheugen\nMeten…"));
     memory_label.set_halign(Align::Start);
     memory_label.set_selectable(true);
-    let network_label = gtk::Label::new(None);
+    let network_label = gtk::Label::new(Some("Netwerk\nMeten…"));
     network_label.set_halign(Align::Start);
     network_label.set_selectable(true);
 
@@ -49,20 +52,11 @@ pub fn activate(application: &Application) {
         .content(&toolbar)
         .build();
 
-    let collector = Rc::new(RefCell::new(cpu::CpuCollector::default()));
-    let network_collector = Rc::new(RefCell::new(network::NetworkCollector::default()));
-    refresh(
-        &collector,
-        &network_collector,
-        &cpu_label,
-        &memory_label,
-        &network_label,
-    );
-
+    let receiver = sampler::start(SamplerConfig::default());
     let cpu_label = cpu_label.downgrade();
     let memory_label = memory_label.downgrade();
     let network_label = network_label.downgrade();
-    gtk::glib::timeout_add_seconds_local(REFRESH_INTERVAL_SECONDS, move || {
+    gtk::glib::timeout_add_local(UI_POLL_INTERVAL, move || {
         let (Some(cpu_label), Some(memory_label), Some(network_label)) = (
             cpu_label.upgrade(),
             memory_label.upgrade(),
@@ -70,27 +64,36 @@ pub fn activate(application: &Application) {
         ) else {
             return gtk::glib::ControlFlow::Break;
         };
-        refresh(
-            &collector,
-            &network_collector,
-            &cpu_label,
-            &memory_label,
-            &network_label,
-        );
+
+        let mut latest = None;
+        loop {
+            match receiver.try_recv() {
+                Ok(snapshot) => latest = Some(snapshot),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    cpu_label.set_text("CPU\nSampling niet beschikbaar");
+                    memory_label.set_text("Geheugen\nSampling niet beschikbaar");
+                    network_label.set_text("Netwerk\nSampling niet beschikbaar");
+                    return gtk::glib::ControlFlow::Break;
+                }
+            }
+        }
+        if let Some(snapshot) = latest {
+            render_snapshot(&snapshot, &cpu_label, &memory_label, &network_label);
+        }
         gtk::glib::ControlFlow::Continue
     });
 
     window.present();
 }
 
-fn refresh(
-    collector: &Rc<RefCell<cpu::CpuCollector>>,
-    network_collector: &Rc<RefCell<network::NetworkCollector>>,
+fn render_snapshot(
+    snapshot: &MonitorSnapshot,
     cpu_label: &gtk::Label,
     memory_label: &gtk::Label,
     network_label: &gtk::Label,
 ) {
-    let cpu = collector.borrow_mut().sample();
+    let cpu = &snapshot.cpu;
     let model = cpu.model.as_deref().unwrap_or("Niet beschikbaar");
     let online = cpu.online.as_deref().unwrap_or("Niet beschikbaar");
     let utilization = format_cpu_utilization(cpu.utilization);
@@ -130,9 +133,9 @@ fn refresh(
         "CPU\n{model}\nOnline logical CPU's: {online}\nTotaal gebruik: {utilization}\n{logical_cpu_lines}"
     ));
 
-    let memory = memory::sample();
+    let memory = snapshot.memory;
     let memory_text = format!(
-        "Geheugen\nRAM gebruikt: {} / {}\nBeschikbaar: {} · Vrij: {}\nBuffers: {} · Cache: {}\nSwap gebruikt: {} / {}\nHugePages: {}\nMemory PSI: {}",
+        "Geheugen\nRAM gebruikt: {} / {}\nBeschikbaar: {} · Vrij: {}\nBuffers: {} · Cache: {}\nSwap gebruikt: {} / {} (vrij {})\nHugePages: {}\nMemory PSI: {}",
         format_optional_bytes(memory.used_bytes()),
         format_optional_bytes(memory.total_bytes),
         format_optional_bytes(memory.available_bytes),
@@ -141,13 +144,13 @@ fn refresh(
         format_optional_bytes(memory.cached_bytes),
         format_optional_bytes(memory.swap_used_bytes()),
         format_optional_bytes(memory.swap_total_bytes),
+        format_optional_bytes(memory.swap_free_bytes),
         format_hugepages(memory),
         format_memory_pressure(memory.pressure),
     );
     memory_label.set_text(&memory_text);
 
-    let network = network_collector.borrow_mut().sample();
-    let network_text = match network {
+    let network_text = match &snapshot.network {
         None => "Netwerk\nNiet beschikbaar".to_owned(),
         Some(snapshot) if snapshot.interfaces.is_empty() => {
             "Netwerk\nGeen interfaces gevonden".to_owned()
@@ -163,64 +166,6 @@ fn refresh(
         ),
     };
     network_label.set_text(&network_text);
-}
-
-fn format_network_interface(interface: &network::NetworkInterfaceSnapshot) -> String {
-    let state = interface
-        .operational_state
-        .as_deref()
-        .unwrap_or("state n.b.");
-    let carrier = match interface.carrier {
-        Some(true) => "carrier on",
-        Some(false) => "carrier off",
-        None => "carrier n.b.",
-    };
-    let speed = interface
-        .speed_mbps
-        .map(|value| format!("{value} Mbps"))
-        .unwrap_or_else(|| "speed n.b.".to_owned());
-    let duplex = interface.duplex.as_deref().unwrap_or("duplex n.b.");
-    format!(
-        "{} · {state}, {carrier} · {speed} {duplex}\n  ↓ {} ({} total, {} errors, {} drops) · ↑ {} ({} total, {} errors, {} drops)",
-        interface.name,
-        format_data_rate(interface.rx_bytes_per_second),
-        format_optional_data_size(interface.rx_bytes),
-        format_optional_count(interface.rx_errors),
-        format_optional_count(interface.rx_dropped),
-        format_data_rate(interface.tx_bytes_per_second),
-        format_optional_data_size(interface.tx_bytes),
-        format_optional_count(interface.tx_errors),
-        format_optional_count(interface.tx_dropped),
-    )
-}
-
-fn format_data_rate(value: Option<f64>) -> String {
-    match value {
-        Some(bytes) if bytes >= 1_048_576.0 => format!("{:.1} MiB/s", bytes / 1_048_576.0),
-        Some(bytes) if bytes >= 1024.0 => format!("{:.1} KiB/s", bytes / 1024.0),
-        Some(bytes) => format!("{bytes:.0} B/s"),
-        None => "Meten…".to_owned(),
-    }
-}
-
-fn format_optional_data_size(value: Option<u64>) -> String {
-    match value {
-        Some(bytes) if bytes >= 1_073_741_824 => {
-            format!("{:.1} GiB", bytes as f64 / 1_073_741_824.0)
-        }
-        Some(bytes) if bytes >= 1_048_576 => {
-            format!("{:.1} MiB", bytes as f64 / 1_048_576.0)
-        }
-        Some(bytes) if bytes >= 1024 => format!("{:.1} KiB", bytes as f64 / 1024.0),
-        Some(bytes) => format!("{bytes} B"),
-        None => "n.b.".to_owned(),
-    }
-}
-
-fn format_optional_count(value: Option<u64>) -> String {
-    value
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| "n.b.".to_owned())
 }
 
 fn format_cpu_utilization(utilization: cpu::CpuUtilization) -> String {
@@ -261,4 +206,62 @@ fn format_memory_pressure(pressure: Option<memory::MemoryPressure>) -> String {
             format!("some {:.2}% · full {full}", pressure.some.avg10)
         })
         .unwrap_or_else(|| "Niet beschikbaar".to_owned())
+}
+
+fn format_network_interface(interface: &network::NetworkInterfaceSnapshot) -> String {
+    let state = interface
+        .operational_state
+        .as_deref()
+        .unwrap_or("state n.b.");
+    let carrier = match interface.carrier {
+        Some(true) => "carrier on",
+        Some(false) => "carrier off",
+        None => "carrier n.b.",
+    };
+    let speed = interface
+        .speed_mbps
+        .map(|value| format!("{value} Mbps"))
+        .unwrap_or_else(|| "speed n.b.".to_owned());
+    let duplex = interface.duplex.as_deref().unwrap_or("duplex n.b.");
+    format!(
+        "{} · {state}, {carrier} · {speed} {duplex}\n  ↓ {} ({} totaal, {} errors, {} drops) · ↑ {} ({} totaal, {} errors, {} drops)",
+        interface.name,
+        format_data_rate(interface.rx_bytes_per_second),
+        format_optional_data_size(interface.rx_bytes),
+        format_optional_count(interface.rx_errors),
+        format_optional_count(interface.rx_dropped),
+        format_data_rate(interface.tx_bytes_per_second),
+        format_optional_data_size(interface.tx_bytes),
+        format_optional_count(interface.tx_errors),
+        format_optional_count(interface.tx_dropped),
+    )
+}
+
+fn format_data_rate(value: Option<f64>) -> String {
+    match value {
+        Some(bytes) if bytes >= 1_048_576.0 => format!("{:.1} MiB/s", bytes / 1_048_576.0),
+        Some(bytes) if bytes >= 1024.0 => format!("{:.1} KiB/s", bytes / 1024.0),
+        Some(bytes) => format!("{bytes:.0} B/s"),
+        None => "Meten…".to_owned(),
+    }
+}
+
+fn format_optional_data_size(value: Option<u64>) -> String {
+    match value {
+        Some(bytes) if bytes >= 1_073_741_824 => {
+            format!("{:.1} GiB", bytes as f64 / 1_073_741_824.0)
+        }
+        Some(bytes) if bytes >= 1_048_576 => {
+            format!("{:.1} MiB", bytes as f64 / 1_048_576.0)
+        }
+        Some(bytes) if bytes >= 1024 => format!("{:.1} KiB", bytes as f64 / 1024.0),
+        Some(bytes) => format!("{bytes} B"),
+        None => "n.b.".to_owned(),
+    }
+}
+
+fn format_optional_count(value: Option<u64>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "n.b.".to_owned())
 }
