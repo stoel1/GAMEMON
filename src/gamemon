@@ -438,8 +438,8 @@ discover_cpu_topology() {
     [[ -n "$CPU_MODEL" ]] || CPU_MODEL=$(< /proc/device-tree/model 2>/dev/null) || CPU_MODEL="Unknown CPU"
 
     # Count physical cores from package_id/core_id, not from logical CPU IDs.
-    local cpu package core key core_type
-    local -A physical_seen=() p_seen=() e_seen=() other_seen=()
+    local cpu package core key core_type max_freq min_freq=0 max_freq_seen=0 freq_khz
+    local -A physical_seen=() p_seen=() e_seen=() other_seen=() freq_by_core=() freq_core_count=()
     CPU_PHYSICAL_COUNT=0
     CPU_PCORE_COUNT=0
     CPU_ECORE_COUNT=0
@@ -454,6 +454,23 @@ discover_cpu_topology() {
         [[ -n "$core" ]] || core="$cpu"
         key="${package}:${core}"
         physical_seen[$key]=1
+
+        # Retain one maximum-frequency value per physical core. This is only
+        # used as a fallback heuristic when the kernel exposes no core_type.
+        max_freq=""
+        for freq_file in \
+            "/sys/devices/system/cpu/cpu${cpu}/cpufreq/cpuinfo_max_freq" \
+            "/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_max_freq"; do
+            if [[ -r "$freq_file" ]]; then
+                read -r max_freq < "$freq_file"
+                [[ "$max_freq" =~ ^[0-9]+$ ]] && break
+                max_freq=""
+            fi
+        done
+        if [[ "$max_freq" =~ ^[0-9]+$ ]] && [[ -z "${freq_by_core[$key]+x}" ]]; then
+            freq_by_core[$key]="$max_freq"
+            freq_core_count[$max_freq]=$(( ${freq_core_count[$max_freq]:-0} + 1 ))
+        fi
 
         # Linux hybrid topology: 1 = Atom/E-core, 2 = Core/P-core.
         if [[ -r "/sys/devices/system/cpu/cpu${cpu}/topology/core_type" ]]; then
@@ -471,12 +488,35 @@ discover_cpu_topology() {
     CPU_ECORE_COUNT=${#e_seen[@]}
     CPU_OTHER_CORE_COUNT=${#other_seen[@]}
     if (( CPU_PCORE_COUNT + CPU_ECORE_COUNT > 0 )); then
-        CPU_TOPOLOGY_MODE="Intel hybrid core_type"
+        CPU_TOPOLOGY_MODE="kernel core_type"
+    else
+        # Conservative fallback: classify only two clearly separated
+        # maximum-frequency groups (at least 15% apart). This avoids
+        # interpreting small per-core turbo-bin differences as hybrid cores.
+        local -a freq_values=()
+        local freq
+        for freq in "${!freq_core_count[@]}"; do
+            freq_values+=("$freq")
+        done
+        if (( ${#freq_values[@]} == 2 )); then
+            if (( freq_values[0] > freq_values[1] )); then
+                max_freq=${freq_values[0]}
+                min_freq=${freq_values[1]}
+            else
+                max_freq=${freq_values[1]}
+                min_freq=${freq_values[0]}
+            fi
+            if (( min_freq > 0 && max_freq * 100 >= min_freq * 115 )); then
+                CPU_PCORE_COUNT=${freq_core_count[$max_freq]}
+                CPU_ECORE_COUNT=${freq_core_count[$min_freq]}
+                CPU_TOPOLOGY_MODE="maximum-frequency heuristic"
+            fi
+        fi
     fi
 }
 
 format_cpu_topology() {
-    if [[ "$CPU_TOPOLOGY_MODE" == "Intel hybrid core_type" ]]; then
+    if [[ "$CPU_TOPOLOGY_MODE" == "kernel core_type" || "$CPU_TOPOLOGY_MODE" == "maximum-frequency heuristic" ]]; then
         printf 'CPU topology: %s physical cores | %s logical CPUs | P-cores: %s | E-cores: %s' \
             "$CPU_PHYSICAL_COUNT" "$CPU_COUNT" "$CPU_PCORE_COUNT" "$CPU_ECORE_COUNT"
     else
