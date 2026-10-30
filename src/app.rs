@@ -6,7 +6,7 @@ use gtk::{Align, Orientation};
 
 use crate::collectors::{cpu, memory};
 
-const REFRESH_INTERVAL_SECONDS: u32 = 2;
+const REFRESH_INTERVAL_SECONDS: u32 = 1;
 
 pub fn activate(application: &Application) {
     let title = gtk::Label::builder()
@@ -66,13 +66,41 @@ fn refresh(
     let cpu = collector.borrow_mut().sample();
     let model = cpu.model.as_deref().unwrap_or("Niet beschikbaar");
     let online = cpu.online.as_deref().unwrap_or("Niet beschikbaar");
-    let utilization = match cpu.utilization {
-        cpu::CpuUtilization::Available(value) => format!("{value:.1}%"),
-        cpu::CpuUtilization::WarmingUp => "Meten…".to_owned(),
-        cpu::CpuUtilization::Unavailable => "Niet beschikbaar".to_owned(),
+    let utilization = format_cpu_utilization(cpu.utilization);
+    let logical_cpu_lines = cpu
+        .logical_cpus
+        .iter()
+        .map(|logical_cpu| {
+            let package = logical_cpu
+                .package_id
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "?".to_owned());
+            let core = logical_cpu
+                .core_id
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "?".to_owned());
+            let frequency = logical_cpu
+                .current_frequency_hz
+                .map(|value| format!("reported {:.0} MHz", value as f64 / 1_000_000.0))
+                .unwrap_or_else(|| "reported frequency n.b.".to_owned());
+            format!(
+                "CPU{}: {} · {} · package {} · core {}",
+                logical_cpu.id,
+                format_cpu_utilization(logical_cpu.utilization),
+                frequency,
+                package,
+                core
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let logical_cpu_lines = if logical_cpu_lines.is_empty() {
+        "Per-logical-CPU details: Niet beschikbaar".to_owned()
+    } else {
+        logical_cpu_lines
     };
     cpu_label.set_text(&format!(
-        "CPU\n{model}\nOnline logical CPU's: {online}\nGebruik: {utilization}"
+        "CPU\n{model}\nOnline logical CPU's: {online}\nTotaal gebruik: {utilization}\n{logical_cpu_lines}"
     ));
 
     let memory = memory::sample();
@@ -90,6 +118,14 @@ fn refresh(
         format_memory_pressure(memory.pressure),
     );
     memory_label.set_text(&memory_text);
+}
+
+fn format_cpu_utilization(utilization: cpu::CpuUtilization) -> String {
+    match utilization {
+        cpu::CpuUtilization::Available(value) => format!("{value:.1}%"),
+        cpu::CpuUtilization::WarmingUp => "Meten…".to_owned(),
+        cpu::CpuUtilization::Unavailable => "Niet beschikbaar".to_owned(),
+    }
 }
 
 fn format_optional_bytes(value: Option<u64>) -> String {

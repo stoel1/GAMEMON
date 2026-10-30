@@ -4,7 +4,7 @@ GAMEMON is a Linux hardware-monitoring application migrating from its original B
 
 ## Status
 
-The Rust application is under active development. It currently discovers CPU identity and online logical CPUs, samples aggregate CPU utilization, and reports RAM, swap, HugePages and memory pressure. CPU and memory values refresh every two seconds. Missing or malformed procfs/sysfs data is displayed as unavailable; CPU utilization is shown after the second successful sample.
+The Rust application is under active development. It currently discovers CPU identity and online logical CPUs, samples aggregate and per-logical-CPU utilization, reads exported package/core topology and driver-reported CPU frequencies, and reports RAM, swap, HugePages and memory pressure. CPU and memory values refresh every second. Missing or malformed procfs/sysfs data is displayed as unavailable; CPU utilization is shown after the second successful sample.
 
 The original Bash implementation is preserved at legacy/bash/gamemon as a historical reference and comparison baseline. It is no longer the primary application target.
 

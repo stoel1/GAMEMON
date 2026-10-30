@@ -10,8 +10,8 @@ The Rust application is the primary development target. The former Bash monitor 
 - [ ] Complete hardware inventory and approve final data model.
 
 ## Telemetry
-- [x] CPU identity, online CPU range and aggregate utilization.
-- [ ] CPU topology, frequency, temperature, power and idle states.
+- [x] CPU identity, online CPU range, aggregate/per-logical utilization, package/core topology and exported current frequency.
+- [ ] Hybrid core classification, temperature, power, throttling and idle states.
 - [x] RAM capacity, available/free memory, buffers and cache.
 - [x] Swap, memory PSI and HugePages when exported by the kernel.
 - [ ] NVIDIA telemetry through NVML, with controlled fallback.
@@ -22,6 +22,7 @@ The Rust application is the primary development target. The former Bash monitor 
 - [ ] PCIe, USB, audio and display inventory.
 
 ## Application
+- [x] One-second default refresh interval.
 - [ ] Configurable sampling intervals and sensor selection.
 - [ ] Dashboard and per-device views.
 - [ ] Historical graphs and status presentation.
