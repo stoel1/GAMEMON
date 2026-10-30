@@ -274,7 +274,10 @@ CSTATE_C3="N/A"
 
 read_cpuidle() {
     local file value old name state now_ns elapsed_ns delta pct cpu
-    local c1_sum=0 c2_sum=0 c3_sum=0 c1_count=0 c2_count=0 c3_count=0
+    local c1_sum=0 c2_sum=0 c3_sum=0 cpu_count=0
+    local c1 c2 c3 total scale
+    local -A cpu_c1=() cpu_c2=() cpu_c3=() cpu_seen=()
+
     now_ns=$(date +%s%N)
     elapsed_ns=0
     if (( CPUIDLE_PREV_NS > 0 )); then elapsed_ns=$((now_ns - CPUIDLE_PREV_NS)); fi
@@ -287,25 +290,47 @@ read_cpuidle() {
         state="${name%%_*}"
         cpu=$(printf '%s' "$file" | grep -oE 'cpu[0-9]+' | head -1)
         [[ -n "$cpu" ]] || continue
+        cpu_seen[$cpu]=1
 
         if [[ -n "${CPUIDLE_PREV[$file]+x}" ]] && (( elapsed_ns > 0 )); then
             old=${CPUIDLE_PREV[$file]}
             delta=$((value - old))
             (( delta < 0 )) && delta=0
-            pct=$(awk -v d="$delta" -v e="$elapsed_ns" 'BEGIN {if (e > 0) printf "%.4f", d*1000000/e; else print 0}')
+            # cpuidle state time is in microseconds; elapsed_ns is nanoseconds.
+            # 1 us = 1000 ns, then multiply by 100 for a percentage: factor 100000.
+            pct=$(awk -v d="$delta" -v e="$elapsed_ns" 'BEGIN {if (e > 0) printf "%.5f", d*100000/e; else print 0}')
             case "$state" in
-                C1) c1_sum=$(awk -v a="$c1_sum" -v b="$pct" 'BEGIN {printf "%.4f",a+b}'); ((c1_count++)) ;;
-                C2) c2_sum=$(awk -v a="$c2_sum" -v b="$pct" 'BEGIN {printf "%.4f",a+b}'); ((c2_count++)) ;;
-                C3) c3_sum=$(awk -v a="$c3_sum" -v b="$pct" 'BEGIN {printf "%.4f",a+b}'); ((c3_count++)) ;;
+                C1) cpu_c1[$cpu]=$(awk -v a="${cpu_c1[$cpu]:-0}" -v b="$pct" 'BEGIN {printf "%.5f",a+b}') ;;
+                C2) cpu_c2[$cpu]=$(awk -v a="${cpu_c2[$cpu]:-0}" -v b="$pct" 'BEGIN {printf "%.5f",a+b}') ;;
+                C3) cpu_c3[$cpu]=$(awk -v a="${cpu_c3[$cpu]:-0}" -v b="$pct" 'BEGIN {printf "%.5f",a+b}') ;;
             esac
         fi
         CPUIDLE_PREV[$file]=$value
     done
 
+    for cpu in "${!cpu_seen[@]}"; do
+        c1=${cpu_c1[$cpu]:-0}
+        c2=${cpu_c2[$cpu]:-0}
+        c3=${cpu_c3[$cpu]:-0}
+        total=$(awk -v a="$c1" -v b="$c2" -v c="$c3" 'BEGIN {printf "%.5f",a+b+c}')
+        # Guard against small sysfs sampling skew; preserve the relative state distribution.
+        if awk -v t="$total" 'BEGIN {exit !(t > 100)}'; then
+            c1=$(awk -v a="$c1" -v t="$total" 'BEGIN {printf "%.5f",a*100/t}')
+            c2=$(awk -v a="$c2" -v t="$total" 'BEGIN {printf "%.5f",a*100/t}')
+            c3=$(awk -v a="$c3" -v t="$total" 'BEGIN {printf "%.5f",a*100/t}')
+        fi
+        c1_sum=$(awk -v a="$c1_sum" -v b="$c1" 'BEGIN {printf "%.5f",a+b}')
+        c2_sum=$(awk -v a="$c2_sum" -v b="$c2" 'BEGIN {printf "%.5f",a+b}')
+        c3_sum=$(awk -v a="$c3_sum" -v b="$c3" 'BEGIN {printf "%.5f",a+b}')
+        ((cpu_count++))
+    done
+
     CPUIDLE_PREV_NS=$now_ns
-    (( c1_count > 0 )) && CSTATE_C1=$(awk -v s="$c1_sum" -v n="$c1_count" 'BEGIN {printf "%.1f",s/n}')
-    (( c2_count > 0 )) && CSTATE_C2=$(awk -v s="$c2_sum" -v n="$c2_count" 'BEGIN {printf "%.1f",s/n}')
-    (( c3_count > 0 )) && CSTATE_C3=$(awk -v s="$c3_sum" -v n="$c3_count" 'BEGIN {printf "%.1f",s/n}')
+    if (( cpu_count > 0 && elapsed_ns > 0 )); then
+        CSTATE_C1=$(awk -v s="$c1_sum" -v n="$cpu_count" 'BEGIN {printf "%.1f",s/n}')
+        CSTATE_C2=$(awk -v s="$c2_sum" -v n="$cpu_count" 'BEGIN {printf "%.1f",s/n}')
+        CSTATE_C3=$(awk -v s="$c3_sum" -v n="$cpu_count" 'BEGIN {printf "%.1f",s/n}')
+    fi
 }
 
 # ============================================================
