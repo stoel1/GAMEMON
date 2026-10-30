@@ -8,22 +8,21 @@ GAMEMON is currently a single Bash process. It samples Linux kernel interfaces a
 |---|---|---|
 | Overall/per-CPU usage | `/proc/stat` | Calculated from deltas between samples |
 | CPU model | `/proc/cpuinfo` | First reported model name |
-| Average CPU frequency | `/proc/cpuinfo` | Arithmetic average of reported `cpu MHz` values; not an effective-frequency measurement |
-| CPU package/core temperatures | `coretemp` hwmon | Uses labels exposed below `/sys/class/hwmon` |
+| Average CPU frequency | `/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq`, fallback `/proc/cpuinfo` | Average of readable per-CPU cpufreq values; not necessarily effective frequency |
+| CPU package/core temperatures | `coretemp`, `k10temp`, `zenpower`, `cpu_thermal`, `soc_dts` hwmon | Uses package/die/core labels exposed by the active driver; coverage varies |
 | Board temperatures/fans | `nct6798` hwmon | Label selection is motherboard/driver dependent |
 | Vcore candidate | `nct6798` `in0_input` | Board-reported value; calibration/scaling is not guaranteed |
-| NVIDIA GPU telemetry | `nvidia-smi` | NVIDIA driver utility is optional |
-| RAM/swap | `/proc/meminfo` | RAM used is calculated as MemTotal minus MemAvailable |
+| GPU telemetry | `nvidia-smi`; `/sys/class/drm/card*/device` | Full NVIDIA query; best-effort AMD/Intel DRM sysfs fields where exposed |
+| RAM/swap | `/proc/meminfo` | Dynamically reads total/available RAM and swap; RAM used is MemTotal minus MemAvailable |
+| C-state residency | `/sys/devices/system/cpu/cpu*/cpuidle/state*/time` | Per-logical-CPU deltas averaged across CPUs; only exposed states are reported |
 
-## Hardware assumptions in the current baseline
+## Dynamic hardware discovery
 
-The current code contains fixed mappings for the i9-13900K temperature labels:
+Online logical CPUs are discovered from `/sys/devices/system/cpu/online`, with `/proc/stat` as a fallback. CPU usage rows and core-temperature labels are generated from discovered data rather than fixed CPU IDs. The displayed core-temperature labels are generic; P-core/E-core classification is intentionally not inferred from fixed numbering.
 
-- P-core labels: 0, 4, 8, 12, 16, 20, 24 and 28
-- E-core labels: 32 through 47
-- Logical CPU display: CPU 0 through CPU 31
+Memory and swap capacity are read dynamically from `/proc/meminfo`. NVIDIA adapters are enumerated through `nvidia-smi`; when that is unavailable, DRM devices are inspected for AMD and Intel vendor IDs and supported sysfs telemetry files.
 
-These assumptions are specific to the development machine and must be replaced with topology discovery before claiming broad CPU support.
+DRM and hwmon interfaces vary by kernel and driver. Missing metrics remain unavailable rather than being guessed. Motherboard fan and voltage mappings are still specific to the Nuvoton NCT6798D driver and need a generic sensor-discovery pass.
 
 ## Privileges
 
@@ -31,9 +30,9 @@ The monitor is designed to run as an ordinary user. Read access to hwmon files i
 
 ## Known limitations
 
-- Fixed CPU topology and temperature-label mapping
-- No `turbostat` integration yet
-- Average frequency is based on `/proc/cpuinfo`, not measured effective frequency
+- CPU temperature and GPU telemetry availability varies by driver
+- No generic motherboard fan/voltage mapping yet
+- Average frequency is based on cpufreq sysfs when available, not guaranteed effective frequency
 - Sensor scaling and board labels vary by hardware
 - No configuration file or command-line options yet
 - Terminal layout assumes enough rows for the complete dashboard
