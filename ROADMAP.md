@@ -1,44 +1,33 @@
-# Roadmap
+# GAMEMON roadmap
 
-## Phase 1 — correctness and sensor reliability
+The Rust application is the primary development target. The former Bash monitor is archived under legacy/bash and remains available as a comparison baseline until feature parity and validation are complete.
 
-- [ ] Validate sensor mappings against documented hwmon labels.
-- [x] Make online CPU topology discovery dynamic instead of relying on fixed i9-13900K core IDs.
-- [ ] Handle missing, unreadable and malformed sensor values consistently.
-- [x] Avoid assuming every system exposes 32 logical CPUs or 48 core temperature labels.
-- [ ] Add shell syntax checks and a lightweight test harness.
+## Migration
+- [x] Select archive migration strategy.
+- [x] Preserve the original Bash monitor under legacy/bash/gamemon.
+- [x] Establish Rust application and modular collector layout.
+- [ ] Validate build against RHEL 10 development packages.
+- [ ] Complete hardware inventory and approve final data model.
 
-## Phase 2 — CPU telemetry
+## Telemetry
+- [ ] CPU topology, utilization, frequency, temperature, power and idle states.
+- [ ] Memory, swap and PSI.
+- [ ] NVIDIA telemetry through NVML, with controlled fallback.
+- [ ] AMD and Intel GPU telemetry through supported DRM interfaces.
+- [ ] Storage and NVMe telemetry.
+- [ ] Network throughput and interface counters.
+- [ ] Motherboard temperatures and fan telemetry through hwmon.
+- [ ] PCIe, USB, audio and display inventory.
 
-- [ ] Decide whether optional `turbostat` metrics add value beyond unprivileged sysfs telemetry.
-- [ ] Add package/core power and effective frequency reporting.
-- [x] Add C-state residency reporting through cpuidle sysfs where available.
-- [ ] Keep a graceful fallback when turbostat or required permissions are unavailable.
+## Application
+- [ ] Configurable sampling intervals and sensor selection.
+- [ ] Dashboard and per-device views.
+- [ ] Historical graphs and status presentation.
+- [ ] Hardware discovery and hotplug handling.
+- [ ] RHEL 10 RPM packaging and lifecycle tests.
 
-## Phase 3 — broader hardware support
-
-- [x] Add multi-adapter NVIDIA detection through `nvidia-smi`.
-- [x] Add best-effort AMD/Intel GPU detection through DRM sysfs.
-- [ ] Validate CPU temperature labels on Intel, AMD and ARM systems.
-- [ ] Validate AMD/Intel GPU telemetry across multiple kernel drivers.
-- [ ] Add broader hwmon discovery for motherboard and platform sensors.
-
-## Phase 4 — terminal interface
-
-- [ ] Improve layout, alignment and terminal-size handling.
-- [ ] Add configurable refresh interval and display options.
-- [ ] Add clear unavailable/unsupported sensor states.
-- [ ] Consider color and compact modes.
-
-## Phase 5 — RHEL RPM
-
-- [ ] Validate RPM build on RHEL 10.
-- [ ] Add package-owned configuration and documentation.
-- [ ] Verify install, upgrade and erase behavior.
-- [ ] Add package checks and clean build instructions.
-
-## Phase 6 — release quality
-
-- [ ] Add automated static checks.
-- [ ] Document supported hardware and tested configurations.
-- [ ] Add versioned releases and release notes.
+## Quality
+- [ ] Unit and integration tests for collectors.
+- [ ] Missing/unsupported/permission-denied sensor tests.
+- [ ] Compare readings against Linux tools and archived Bash monitor.
+- [ ] Measure CPU and memory overhead.
