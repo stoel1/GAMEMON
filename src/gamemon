@@ -347,7 +347,7 @@ read_gpu() {
     fi
 
     # Generic DRM telemetry for AMD and Intel; unsupported fields remain N/A.
-    for dev in /sys/class/drm/card[0-9]/device; do
+    for dev in /sys/class/drm/card[0-9]*/device; do
         [[ -e "$dev" ]] || continue
         vendor="$(<"$dev/vendor" 2>/dev/null)"
         case "$vendor" in
