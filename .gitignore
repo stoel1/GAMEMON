@@ -1,13 +1,9 @@
-# RPM build output
+/target/
 rpmbuild/
 *.rpm
 *.src.rpm
-
-# Editor and temporary files
 *~
 *.swp
 *.swo
 .DS_Store
-
-# Local test output
 *.log
