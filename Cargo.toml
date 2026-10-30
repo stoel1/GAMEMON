@@ -1,0 +1,18 @@
+[package]
+name = "gamemon"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Linux hardware monitoring dashboard"
+license = "LicenseRef-Proprietary"
+repository = "https://github.com/stoel1/GAMEMON"
+
+[dependencies]
+adw = { package = "libadwaita", version = "0.7", features = ["v1_5"] }
+gtk = { package = "gtk4", version = "0.9", features = ["v4_14"] }
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
