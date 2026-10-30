@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Added runtime discovery of online logical CPUs; removed fixed 32-thread display assumptions.
+- Added generic CPU temperature label handling for Intel and common AMD/ARM hwmon drivers.
+- Added dynamic multi-GPU NVIDIA reporting and best-effort AMD/Intel DRM sysfs telemetry.
+- Kept RAM and swap capacity detection dynamic through `/proc/meminfo`.
+- Replaced fixed P-core/E-core temperature numbering with discovered core labels.
+
+
 All notable project changes will be recorded here.
 
 ## Unreleased — initial repository baseline
