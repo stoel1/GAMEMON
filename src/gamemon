@@ -14,6 +14,8 @@ declare -A PREV_TOTAL PREV_IDLE
 declare -A CPU_USAGE
 declare -A CORE_TEMP
 declare -A BOARD_TEMP FAN_RPM
+ declare -A NET_PREV_RX NET_PREV_TX
+ declare -a HWMON_TEMP_LINES HWMON_VOLT_LINES NETWORK_LINES
 declare -a CPU_IDS GPU_LINES
 
 
@@ -29,6 +31,11 @@ CPU_OTHER_CORE_COUNT=0
 CPU_TOPOLOGY_MODE="generic"
 AVG_FREQ=0
 VCORE="N/A"
+CPU_THROTTLE_COUNT="N/A"
+CPU_THROTTLE_TIME="N/A"
+PSTATE_STATUS="N/A"
+PSTATE_MIN="N/A"
+PSTATE_MAX="N/A"
 
 
 GPU_UTIL="N/A"
@@ -229,6 +236,101 @@ read_board_sensors() {
 }
 
 # ============================================================
+# GENERIC HWMON DISCOVERY (TEMPERATURES AND VOLTAGES)
+# ============================================================
+
+read_generic_hwmon() {
+    HWMON_TEMP_LINES=()
+    HWMON_VOLT_LINES=()
+    local hw name file base label value channel
+    for hw in /sys/class/hwmon/hwmon*; do
+        [[ -r "$hw/name" ]] || continue
+        IFS= read -r name < "$hw/name" || continue
+        # CPU core/package temperatures are already handled separately.
+        [[ "$name" == coretemp ]] && continue
+        for file in "$hw"/temp*_input; do
+            [[ -r "$file" ]] || continue
+            base="${file%_input}"
+            label=""
+            [[ -r "${base}_label" ]] && IFS= read -r label < "${base}_label"
+            read -r value < "$file" || continue
+            [[ "$value" =~ ^-?[0-9]+$ ]] || continue
+            (( value > 0 )) || continue
+            value=$(awk -v v="$value" 'BEGIN {printf "%.1f",v/1000}')
+            [[ -n "$label" ]] || label="$(basename "$base")"
+            HWMON_TEMP_LINES+=("$name / $label: $value C")
+        done
+        for file in "$hw"/in*_input; do
+            [[ -r "$file" ]] || continue
+            base="${file%_input}"
+            channel=$(basename "$base")
+            label=""
+            [[ -r "${base}_label" ]] && IFS= read -r label < "${base}_label"
+            read -r value < "$file" || continue
+            [[ "$value" =~ ^[0-9]+$ ]] || continue
+            value=$(awk -v v="$value" 'BEGIN {printf "%.3f",v/1000}')
+            [[ -n "$label" ]] || label="$channel"
+            HWMON_VOLT_LINES+=("$name / $label: $value V")
+        done
+    done
+}
+
+# ============================================================
+# CPU THROTTLING AND INTEL P-STATE
+# ============================================================
+
+read_cpu_throttling() {
+    local base=/sys/devices/system/cpu/cpu0/thermal_throttle
+    local count=0 time=0 value
+    if [[ -r "$base/core_throttle_count" && -r "$base/package_throttle_count" ]]; then
+        read -r value < "$base/core_throttle_count"; [[ "$value" =~ ^[0-9]+$ ]] && count=$((count + value))
+        read -r value < "$base/package_throttle_count"; [[ "$value" =~ ^[0-9]+$ ]] && count=$((count + value))
+        CPU_THROTTLE_COUNT=$count
+    fi
+    if [[ -r "$base/core_throttle_total_time_ms" && -r "$base/package_throttle_total_time_ms" ]]; then
+        read -r value < "$base/core_throttle_total_time_ms"; [[ "$value" =~ ^[0-9]+$ ]] && time=$((time + value))
+        read -r value < "$base/package_throttle_total_time_ms"; [[ "$value" =~ ^[0-9]+$ ]] && time=$((time + value))
+        CPU_THROTTLE_TIME="$time"
+    fi
+    local pstate=/sys/devices/system/cpu/intel_pstate
+    [[ -r "$pstate/status" ]] && IFS= read -r PSTATE_STATUS < "$pstate/status"
+    [[ -r "$pstate/min_perf_pct" ]] && IFS= read -r PSTATE_MIN < "$pstate/min_perf_pct"
+    [[ -r "$pstate/max_perf_pct" ]] && IFS= read -r PSTATE_MAX < "$pstate/max_perf_pct"
+}
+
+# ============================================================
+# NETWORK THROUGHPUT VIA SYSFS COUNTERS
+# ============================================================
+
+read_network() {
+    NETWORK_LINES=()
+    local iface base rx tx speed old_rx old_tx now elapsed rx_rate tx_rate
+    now=$(date +%s%N)
+    elapsed=1000000000
+    [[ -n "${NET_PREV_TIME:-}" ]] && elapsed=$((now - NET_PREV_TIME))
+    (( elapsed > 0 )) || elapsed=1000000000
+    for base in /sys/class/net/*; do
+        [[ -d "$base" ]] || continue
+        iface=$(basename "$base")
+        [[ "$iface" == lo ]] && continue
+        [[ -r "$base/statistics/rx_bytes" && -r "$base/statistics/tx_bytes" ]] || continue
+        read -r rx < "$base/statistics/rx_bytes"
+        read -r tx < "$base/statistics/tx_bytes"
+        speed="N/A"
+        [[ -r "$base/speed" ]] && read -r speed < "$base/speed"
+        rx_rate="0.00"; tx_rate="0.00"
+        if [[ -n "${NET_PREV_RX[$iface]+x}" && -n "${NET_PREV_TX[$iface]+x}" ]]; then
+            old_rx=${NET_PREV_RX[$iface]}; old_tx=${NET_PREV_TX[$iface]}
+            rx_rate=$(awk -v d="$((rx-old_rx))" -v t="$elapsed" 'BEGIN {if(d>=0 && t>0) printf "%.2f",d*1000000000/t/1048576; else print "0.00"}')
+            tx_rate=$(awk -v d="$((tx-old_tx))" -v t="$elapsed" 'BEGIN {if(d>=0 && t>0) printf "%.2f",d*1000000000/t/1048576; else print "0.00"}')
+        fi
+        NET_PREV_RX[$iface]=$rx; NET_PREV_TX[$iface]=$tx
+        NETWORK_LINES+=("$iface: Link ${speed} Mb/s | RX ${rx_rate} MiB/s | TX ${tx_rate} MiB/s")
+    done
+    NET_PREV_TIME=$now
+}
+
+# ============================================================
 # CPU FREQUENTIE VIA SYSFS
 # ============================================================
 
@@ -330,15 +432,17 @@ read_gpu() {
 
     # NVIDIA: nvidia-smi supports multiple adapters in one query.
     if command -v nvidia-smi >/dev/null 2>&1; then
-        data=$(nvidia-smi --query-gpu=name,utilization.gpu,temperature.gpu,clocks.gr,clocks.mem,power.draw,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null) || data=""
+        data=$(nvidia-smi --query-gpu=name,pstate,utilization.gpu,utilization.memory,utilization.encoder,utilization.decoder,temperature.gpu,fan.speed,power.draw,power.limit,clocks.current.graphics,clocks.current.memory,clocks.current.video,pcie.link.gen.current,pcie.link.width.current,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null) || data=""
         if [[ -n "$data" ]]; then
             while IFS= read -r line; do
-                IFS=',' read -r name util temp core memclock power used total <<< "$line"
-                name="${name# }"; name="${name% }"
-                util="${util// /}"; temp="${temp// /}"; core="${core// /}"
-                memclock="${memclock// /}"; power="${power// /}"
-                used="${used// /}"; total="${total// /}"
-                GPU_LINES+=("${name}: ${util}% | ${temp} C | Core ${core} MHz | Memory ${memclock} MHz | ${power} W | VRAM ${used}/${total} MiB")
+                IFS=',' read -r name pstate util memutil encoder decoder temp fan power limit core memclock video pcie_gen pcie_width used total <<< "$line"
+                local field
+                for field in name pstate util memutil encoder decoder temp fan power limit core memclock video pcie_gen pcie_width used total; do
+                    printf -v "$field" '%s' "${!field// /}"
+                done
+                GPU_LINES+=("${name}: ${util}% GPU | ${memutil}% memory | ${temp} C | Fan ${fan}% | ${power}/${limit} W | P-state ${pstate}")
+                GPU_LINES+=("Clocks: Core ${core} MHz | Memory ${memclock} MHz | Video ${video} MHz | PCIe Gen ${pcie_gen} x${pcie_width}")
+                GPU_LINES+=("Engines: Encoder ${encoder}% | Decoder ${decoder}% | VRAM ${used}/${total} MiB")
             done <<< "$data"
             return
         fi
@@ -546,6 +650,9 @@ render() {
     read_cpuidle
     read_gpu
     read_memory
+    read_generic_hwmon
+    read_cpu_throttling
+    read_network
 
     # --------------------------------------------------------
     # HEADER
@@ -569,6 +676,8 @@ render() {
     put "CPU Vcore (NCT6798D): ${VCORE} V"
 
     put "CPU idle states (gemiddelde per logische CPU): C1 ${CSTATE_C1}% | C2 ${CSTATE_C2}% | C3 ${CSTATE_C3}%"
+    put "CPU throttling: ${CPU_THROTTLE_COUNT} events | ${CPU_THROTTLE_TIME} ms total"
+    put "Intel P-state: ${PSTATE_STATUS} | min ${PSTATE_MIN}% | max ${PSTATE_MAX}%"
 
     put "LOGICAL PROCESSORS"
 
@@ -602,6 +711,8 @@ render() {
     done
 
     put "$temps"
+    for line in "${HWMON_TEMP_LINES[@]}"; do put "Temperature: $line"; done
+    for line in "${HWMON_VOLT_LINES[@]}"; do put "Voltage: $line"; done
 
     put "------------------------------------------------------------------"
 
@@ -612,6 +723,10 @@ render() {
     put "GRAPHICS / GPU"
 
     for line in "${GPU_LINES[@]}"; do put "$line"; done
+
+    put "------------------------------------------------------------------"
+    put "NETWORK"
+    for line in "${NETWORK_LINES[@]}"; do put "$line"; done
 
     put "------------------------------------------------------------------"
 
