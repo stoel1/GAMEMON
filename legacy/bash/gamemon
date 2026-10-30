@@ -1,0 +1,775 @@
+#!/usr/bin/env bash
+
+# ============================================================
+# GAMEMON - Linux hardware monitor
+# Dynamic CPU, memory and GPU discovery
+# Motherboard sensors depend on the active hwmon driver
+# ============================================================
+
+set -u
+
+REFRESH=1
+
+declare -A PREV_TOTAL PREV_IDLE
+declare -A CPU_USAGE
+declare -A CORE_TEMP
+declare -A BOARD_TEMP FAN_RPM
+declare -A NET_PREV_RX NET_PREV_TX
+declare -a HWMON_TEMP_LINES HWMON_VOLT_LINES NETWORK_LINES
+declare -a CPU_IDS GPU_LINES
+
+
+CPU_TOTAL=0
+PACKAGE_TEMP="N/A"
+HOTTEST_CORE="N/A"
+CPU_MODEL="Unknown CPU"
+CPU_COUNT=0
+CPU_PHYSICAL_COUNT=0
+CPU_PCORE_COUNT=0
+CPU_ECORE_COUNT=0
+CPU_OTHER_CORE_COUNT=0
+CPU_TOPOLOGY_MODE="generic"
+AVG_FREQ=0
+VCORE="N/A"
+CPU_THROTTLE_COUNT="N/A"
+CPU_THROTTLE_TIME="N/A"
+PSTATE_STATUS="N/A"
+PSTATE_MIN="N/A"
+PSTATE_MAX="N/A"
+
+
+GPU_UTIL="N/A"
+GPU_TEMP="N/A"
+GPU_CORE="N/A"
+GPU_MEM_CLOCK="N/A"
+GPU_POWER="N/A"
+VRAM_USED="N/A"
+VRAM_TOTAL="N/A"
+
+# ============================================================
+# TERMINAL
+# ============================================================
+
+SAVED_STTY=$(stty -g 2>/dev/null || true)
+
+cleanup() {
+    [[ -n "$SAVED_STTY" ]] && stty "$SAVED_STTY" 2>/dev/null
+    tput cnorm 2>/dev/null
+    tput rmcup 2>/dev/null
+    printf '\n'
+}
+
+trap cleanup EXIT
+trap 'exit 0' INT TERM
+
+tput smcup 2>/dev/null
+stty -echo 2>/dev/null
+tput civis 2>/dev/null
+tput clear
+
+ROW=0
+
+put() {
+    local text="$1"
+    local cols rows
+
+    cols=$(tput cols)
+    rows=$(tput lines)
+
+    (( ROW >= rows )) && return
+
+    tput cup "$ROW" 0
+
+    if (( cols > 1 )); then
+        printf '%-*.*s\033[K' \
+            "$((cols - 1))" "$((cols - 1))" "$text"
+    fi
+
+    ROW=$((ROW + 1))
+}
+
+# ============================================================
+# CPU GEBRUIK VIA /proc/stat
+# ============================================================
+
+update_cpu_usage() {
+
+    local line name total idle i
+    local delta_total delta_idle usage
+
+    while IFS= read -r line; do
+
+        read -ra fields <<< "$line"
+        name="${fields[0]}"
+
+        [[ "$name" =~ ^cpu([0-9]+)?$ ]] || continue
+
+        total=0
+
+        for ((i=1; i<=8; i++)); do
+            total=$((total + fields[i]))
+        done
+
+        idle=$((fields[4] + fields[5]))
+
+        if [[ -n "${PREV_TOTAL[$name]+x}" ]]; then
+
+            delta_total=$((total - PREV_TOTAL[$name]))
+            delta_idle=$((idle - PREV_IDLE[$name]))
+
+            if (( delta_total > 0 )); then
+                usage=$((100 * (delta_total - delta_idle) / delta_total))
+            else
+                usage=0
+            fi
+        else
+            usage=0
+        fi
+
+        PREV_TOTAL[$name]=$total
+        PREV_IDLE[$name]=$idle
+
+        if [[ "$name" == "cpu" ]]; then
+            CPU_TOTAL=$usage
+        else
+            CPU_USAGE["${name#cpu}"]=$usage
+        fi
+
+    done < /proc/stat
+}
+
+# ============================================================
+# CPU TEMPERATURES VIA GENERIC HWMON LABELS
+# ============================================================
+
+read_cpu_temperatures() {
+    CORE_TEMP=()
+    PACKAGE_TEMP="N/A"
+    HOTTEST_CORE="N/A"
+    local hw name file label value core hottest=-100
+    for hw in /sys/class/hwmon/hwmon*; do
+        [[ -r "$hw/name" ]] || continue
+        IFS= read -r name < "$hw/name" || continue
+        case "$name" in coretemp|k10temp|zenpower|cpu_thermal|soc_dts) ;; *) continue ;; esac
+        for file in "$hw"/temp*_input; do
+            [[ -r "$file" ]] || continue
+            label=""
+            if [[ -r "${file%_input}_label" ]]; then
+                IFS= read -r label < "${file%_input}_label" || label=""
+            fi
+            IFS= read -r value < "$file" || continue
+            [[ "$value" =~ ^-?[0-9]+$ ]] || continue
+            value=$((value / 1000))
+            (( value > 0 )) || continue
+            if [[ "$label" =~ ^Package[[:space:]]id[[:space:]][0-9]+$ || "$label" == "CPU Package" || "$label" == "CPU Die" || "$label" == Tctl || "$label" == Tdie ]]; then
+                PACKAGE_TEMP="$value"
+            elif [[ "$label" =~ ^Core[[:space:]]([0-9]+)$ ]]; then
+                core="${BASH_REMATCH[1]}"
+                CORE_TEMP[$core]="$value"
+            elif [[ "$name" == k10temp || "$name" == zenpower ]]; then
+                [[ "$PACKAGE_TEMP" == N/A ]] && PACKAGE_TEMP="$value"
+            fi
+            (( value > hottest )) && hottest=$value
+        done
+    done
+    (( hottest > -100 )) && HOTTEST_CORE="$hottest"
+}
+
+# ============================================================
+# MOEDERBORD / VCORE / VENTILATOREN
+# ============================================================
+
+read_board_sensors() {
+
+    BOARD_TEMP=()
+    FAN_RPM=()
+    VCORE="N/A"
+
+    local hw name file base label value
+    local VCORE_MV
+
+    for hw in /sys/class/hwmon/hwmon*; do
+
+        [[ -r "$hw/name" ]] || continue
+        name=$(cat "$hw/name")
+
+        [[ "$name" == "nct6798" ]] || continue
+
+        # CPU Vcore - NCT6798D in0
+        if [[ -r "$hw/in0_input" ]]; then
+
+            VCORE_MV=$(cat "$hw/in0_input")
+
+            printf -v VCORE '%d.%03d' \
+                "$((VCORE_MV / 1000))" \
+                "$((VCORE_MV % 1000))"
+        fi
+
+        # Moederbordtemperaturen
+        for file in "$hw"/temp*_input; do
+
+            [[ -r "$file" ]] || continue
+
+            base="${file%_input}"
+            label=$(cat "${base}_label" 2>/dev/null || true)
+            value=$(cat "$file" 2>/dev/null || echo 0)
+
+            value=$((value / 1000))
+
+            (( value <= 0 )) && continue
+
+            case "$label" in
+                SYSTIN|AUXTIN0|AUXTIN1|AUXTIN2|AUXTIN3|AUXTIN4|"PECI Agent 0")
+                    BOARD_TEMP["$label"]=$value
+                    ;;
+            esac
+        done
+
+        # Ventilatorsnelheden
+        for file in "$hw"/fan*_input; do
+
+            [[ -r "$file" ]] || continue
+
+            base="${file%_input}"
+            label=$(basename "$base")
+            value=$(cat "$file" 2>/dev/null || echo 0)
+
+            FAN_RPM["$label"]=$value
+        done
+    done
+}
+
+# ============================================================
+# GENERIC HWMON DISCOVERY (TEMPERATURES AND VOLTAGES)
+# ============================================================
+
+read_generic_hwmon() {
+    HWMON_TEMP_LINES=()
+    HWMON_VOLT_LINES=()
+    local hw name file base label value channel
+    for hw in /sys/class/hwmon/hwmon*; do
+        [[ -r "$hw/name" ]] || continue
+        IFS= read -r name < "$hw/name" || continue
+        # CPU core/package temperatures are already handled separately.
+        [[ "$name" == coretemp ]] && continue
+        for file in "$hw"/temp*_input; do
+            [[ -r "$file" ]] || continue
+            base="${file%_input}"
+            label=""
+            [[ -r "${base}_label" ]] && IFS= read -r label < "${base}_label"
+            read -r value < "$file" || continue
+            [[ "$value" =~ ^-?[0-9]+$ ]] || continue
+            (( value > 0 )) || continue
+            value=$(awk -v v="$value" 'BEGIN {printf "%.1f",v/1000}')
+            [[ -n "$label" ]] || label="$(basename "$base")"
+            HWMON_TEMP_LINES+=("$name / $label: $value C")
+        done
+        for file in "$hw"/in*_input; do
+            [[ -r "$file" ]] || continue
+            base="${file%_input}"
+            channel=$(basename "$base")
+            label=""
+            [[ -r "${base}_label" ]] && IFS= read -r label < "${base}_label"
+            read -r value < "$file" || continue
+            [[ "$value" =~ ^[0-9]+$ ]] || continue
+            value=$(awk -v v="$value" 'BEGIN {printf "%.3f",v/1000}')
+            [[ -n "$label" ]] || label="$channel"
+            HWMON_VOLT_LINES+=("$name / $label: $value V")
+        done
+    done
+}
+
+# ============================================================
+# CPU THROTTLING AND INTEL P-STATE
+# ============================================================
+
+read_cpu_throttling() {
+    local base=/sys/devices/system/cpu/cpu0/thermal_throttle
+    local count=0 time=0 value
+    if [[ -r "$base/core_throttle_count" && -r "$base/package_throttle_count" ]]; then
+        read -r value < "$base/core_throttle_count"; [[ "$value" =~ ^[0-9]+$ ]] && count=$((count + value))
+        read -r value < "$base/package_throttle_count"; [[ "$value" =~ ^[0-9]+$ ]] && count=$((count + value))
+        CPU_THROTTLE_COUNT=$count
+    fi
+    if [[ -r "$base/core_throttle_total_time_ms" && -r "$base/package_throttle_total_time_ms" ]]; then
+        read -r value < "$base/core_throttle_total_time_ms"; [[ "$value" =~ ^[0-9]+$ ]] && time=$((time + value))
+        read -r value < "$base/package_throttle_total_time_ms"; [[ "$value" =~ ^[0-9]+$ ]] && time=$((time + value))
+        CPU_THROTTLE_TIME="$time"
+    fi
+    local pstate=/sys/devices/system/cpu/intel_pstate
+    [[ -r "$pstate/status" ]] && IFS= read -r PSTATE_STATUS < "$pstate/status"
+    [[ -r "$pstate/min_perf_pct" ]] && IFS= read -r PSTATE_MIN < "$pstate/min_perf_pct"
+    [[ -r "$pstate/max_perf_pct" ]] && IFS= read -r PSTATE_MAX < "$pstate/max_perf_pct"
+}
+
+# ============================================================
+# NETWORK THROUGHPUT VIA SYSFS COUNTERS
+# ============================================================
+
+read_network() {
+    NETWORK_LINES=()
+    local iface base rx tx speed old_rx old_tx now elapsed rx_rate tx_rate
+    now=$(date +%s%N)
+    elapsed=1000000000
+    [[ -n "${NET_PREV_TIME:-}" ]] && elapsed=$((now - NET_PREV_TIME))
+    (( elapsed > 0 )) || elapsed=1000000000
+    for base in /sys/class/net/*; do
+        [[ -d "$base" ]] || continue
+        iface=$(basename "$base")
+        [[ "$iface" == lo ]] && continue
+        [[ -r "$base/statistics/rx_bytes" && -r "$base/statistics/tx_bytes" ]] || continue
+        read -r rx < "$base/statistics/rx_bytes"
+        read -r tx < "$base/statistics/tx_bytes"
+        speed="N/A"
+        [[ -r "$base/speed" ]] && read -r speed < "$base/speed"
+        rx_rate="0.00"; tx_rate="0.00"
+        if [[ -n "${NET_PREV_RX[$iface]+x}" && -n "${NET_PREV_TX[$iface]+x}" ]]; then
+            old_rx=${NET_PREV_RX[$iface]}; old_tx=${NET_PREV_TX[$iface]}
+            rx_rate=$(awk -v d="$((rx-old_rx))" -v t="$elapsed" 'BEGIN {if(d>=0 && t>0) printf "%.2f",d*1000000000/t/1048576; else print "0.00"}')
+            tx_rate=$(awk -v d="$((tx-old_tx))" -v t="$elapsed" 'BEGIN {if(d>=0 && t>0) printf "%.2f",d*1000000000/t/1048576; else print "0.00"}')
+        fi
+        NET_PREV_RX[$iface]=$rx; NET_PREV_TX[$iface]=$tx
+        NETWORK_LINES+=("$iface: Link ${speed} Mb/s | RX ${rx_rate} MiB/s | TX ${tx_rate} MiB/s")
+    done
+    NET_PREV_TIME=$now
+}
+
+# ============================================================
+# CPU FREQUENTIE VIA SYSFS
+# ============================================================
+
+read_cpu_frequency() {
+    local file value sum=0 count=0
+    for file in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq; do
+        [[ -r "$file" ]] || continue
+        read -r value < "$file"
+        [[ "$value" =~ ^[0-9]+$ ]] || continue
+        sum=$((sum + value))
+        count=$((count + 1))
+    done
+    if (( count > 0 )); then
+        AVG_FREQ=$(awk -v s="$sum" -v c="$count" 'BEGIN {printf "%.0f", s/c/1000}')
+    else
+        AVG_FREQ=$(awk '/^cpu MHz/ {sum += $4; count++} END {if (count) printf "%.0f", sum/count; else print 0}' /proc/cpuinfo)
+    fi
+}
+
+# ============================================================
+# CPU C-STATES VIA SYSFS (GEEN ROOT NODIG)
+# ============================================================
+
+declare -A CPUIDLE_PREV
+CPUIDLE_PREV_NS=0
+CSTATE_C1="N/A"
+CSTATE_C2="N/A"
+CSTATE_C3="N/A"
+
+read_cpuidle() {
+    local file value old name state now_ns elapsed_ns delta pct cpu
+    local c1_sum=0 c2_sum=0 c3_sum=0 cpu_count=0
+    local c1 c2 c3 total scale
+    local -A cpu_c1=() cpu_c2=() cpu_c3=() cpu_seen=()
+
+    now_ns=$(date +%s%N)
+    elapsed_ns=0
+    if (( CPUIDLE_PREV_NS > 0 )); then elapsed_ns=$((now_ns - CPUIDLE_PREV_NS)); fi
+
+    for file in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state*/time; do
+        [[ -r "$file" ]] || continue
+        read -r value < "$file"
+        [[ "$value" =~ ^[0-9]+$ ]] || continue
+        name=$(<"${file%/time}/name")
+        state="${name%%_*}"
+        cpu=$(printf '%s' "$file" | grep -oE 'cpu[0-9]+' | head -1)
+        [[ -n "$cpu" ]] || continue
+        cpu_seen[$cpu]=1
+
+        if [[ -n "${CPUIDLE_PREV[$file]+x}" ]] && (( elapsed_ns > 0 )); then
+            old=${CPUIDLE_PREV[$file]}
+            delta=$((value - old))
+            (( delta < 0 )) && delta=0
+            # cpuidle state time is in microseconds; elapsed_ns is nanoseconds.
+            # 1 us = 1000 ns, then multiply by 100 for a percentage: factor 100000.
+            pct=$(awk -v d="$delta" -v e="$elapsed_ns" 'BEGIN {if (e > 0) printf "%.5f", d*100000/e; else print 0}')
+            case "$state" in
+                C1) cpu_c1[$cpu]=$(awk -v a="${cpu_c1[$cpu]:-0}" -v b="$pct" 'BEGIN {printf "%.5f",a+b}') ;;
+                C2) cpu_c2[$cpu]=$(awk -v a="${cpu_c2[$cpu]:-0}" -v b="$pct" 'BEGIN {printf "%.5f",a+b}') ;;
+                C3) cpu_c3[$cpu]=$(awk -v a="${cpu_c3[$cpu]:-0}" -v b="$pct" 'BEGIN {printf "%.5f",a+b}') ;;
+            esac
+        fi
+        CPUIDLE_PREV[$file]=$value
+    done
+
+    for cpu in "${!cpu_seen[@]}"; do
+        c1=${cpu_c1[$cpu]:-0}
+        c2=${cpu_c2[$cpu]:-0}
+        c3=${cpu_c3[$cpu]:-0}
+        total=$(awk -v a="$c1" -v b="$c2" -v c="$c3" 'BEGIN {printf "%.5f",a+b+c}')
+        # Guard against small sysfs sampling skew; preserve the relative state distribution.
+        if awk -v t="$total" 'BEGIN {exit !(t > 100)}'; then
+            c1=$(awk -v a="$c1" -v t="$total" 'BEGIN {printf "%.5f",a*100/t}')
+            c2=$(awk -v a="$c2" -v t="$total" 'BEGIN {printf "%.5f",a*100/t}')
+            c3=$(awk -v a="$c3" -v t="$total" 'BEGIN {printf "%.5f",a*100/t}')
+        fi
+        c1_sum=$(awk -v a="$c1_sum" -v b="$c1" 'BEGIN {printf "%.5f",a+b}')
+        c2_sum=$(awk -v a="$c2_sum" -v b="$c2" 'BEGIN {printf "%.5f",a+b}')
+        c3_sum=$(awk -v a="$c3_sum" -v b="$c3" 'BEGIN {printf "%.5f",a+b}')
+        ((cpu_count++))
+    done
+
+    CPUIDLE_PREV_NS=$now_ns
+    if (( cpu_count > 0 && elapsed_ns > 0 )); then
+        CSTATE_C1=$(awk -v s="$c1_sum" -v n="$cpu_count" 'BEGIN {printf "%.1f",s/n}')
+        CSTATE_C2=$(awk -v s="$c2_sum" -v n="$cpu_count" 'BEGIN {printf "%.1f",s/n}')
+        CSTATE_C3=$(awk -v s="$c3_sum" -v n="$cpu_count" 'BEGIN {printf "%.1f",s/n}')
+    fi
+}
+
+# ============================================================
+# GPU DETECTION: NVIDIA, AMD AND INTEL (BEST EFFORT)
+# ============================================================
+
+read_gpu() {
+    GPU_LINES=()
+    local data line name util temp core memclock power used total
+    local dev vendor busy mem_used mem_total hw file label temp_value power_value
+
+    # NVIDIA: nvidia-smi supports multiple adapters in one query.
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        data=$(nvidia-smi --query-gpu=name,pstate,utilization.gpu,utilization.memory,utilization.encoder,utilization.decoder,temperature.gpu,fan.speed,power.draw,power.limit,clocks.current.graphics,clocks.current.memory,clocks.current.video,pcie.link.gen.current,pcie.link.width.current,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null) || data=""
+        if [[ -n "$data" ]]; then
+            while IFS= read -r line; do
+                IFS=',' read -r name pstate util memutil encoder decoder temp fan power limit core memclock video pcie_gen pcie_width used total <<< "$line"
+                name="${name// /}"; pstate="${pstate// /}"
+                util="${util// /}"; memutil="${memutil// /}"
+                encoder="${encoder// /}"; decoder="${decoder// /}"
+                temp="${temp// /}"; fan="${fan// /}"
+                power="${power// /}"; limit="${limit// /}"
+                core="${core// /}"; memclock="${memclock// /}"
+                video="${video// /}"; pcie_gen="${pcie_gen// /}"
+                pcie_width="${pcie_width// /}"; used="${used// /}"
+                total="${total// /}"
+                GPU_LINES+=("${name}: ${util}% GPU | ${memutil}% memory | ${temp} C | Fan ${fan}% | ${power}/${limit} W | P-state ${pstate}")
+                GPU_LINES+=("Clocks: Core ${core} MHz | Memory ${memclock} MHz | Video ${video} MHz | PCIe Gen ${pcie_gen} x${pcie_width}")
+                GPU_LINES+=("Engines: Encoder ${encoder}% | Decoder ${decoder}% | VRAM ${used}/${total} MiB")
+            done <<< "$data"
+            return
+        fi
+    fi
+
+    # Generic DRM telemetry for AMD and Intel; unsupported fields remain N/A.
+    for dev in /sys/class/drm/card[0-9]*/device; do
+        [[ -e "$dev" ]] || continue
+        vendor="$(<"$dev/vendor" 2>/dev/null)"
+        case "$vendor" in
+            0x1002) name="AMD GPU" ;;
+            0x8086) name="Intel GPU" ;;
+            0x10de) name="NVIDIA GPU" ;;
+            *) continue ;;
+        esac
+        busy="N/A"; mem_used="N/A"; mem_total="N/A"; temp="N/A"; power="N/A"
+        [[ -r "$dev/gpu_busy_percent" ]] && read -r busy < "$dev/gpu_busy_percent"
+        [[ -r "$dev/gt_busy_percent" ]] && read -r busy < "$dev/gt_busy_percent"
+        [[ -r "$dev/mem_info_vram_used" ]] && { read -r mem_used < "$dev/mem_info_vram_used"; mem_used=$((mem_used / 1048576)); }
+        [[ -r "$dev/mem_info_vram_total" ]] && { read -r mem_total < "$dev/mem_info_vram_total"; mem_total=$((mem_total / 1048576)); }
+        for hw in "$dev"/hwmon/hwmon*; do
+            [[ -d "$hw" ]] || continue
+            for file in "$hw"/temp*_input; do
+                [[ -r "$file" ]] || continue
+                read -r temp_value < "$file"
+                [[ "$temp_value" =~ ^[0-9]+$ ]] && temp=$((temp_value / 1000)) && break
+            done
+            for file in "$hw"/power*_average "$hw"/power*_input; do
+                [[ -r "$file" ]] || continue
+                read -r power_value < "$file"
+                [[ "$power_value" =~ ^[0-9]+$ ]] && power=$(awk -v p="$power_value" 'BEGIN {printf "%.1f",p/1000000}') && break
+            done
+        done
+        GPU_LINES+=("${name}: ${busy}% | ${temp} C | Power ${power} W | VRAM ${mem_used}/${mem_total} MiB")
+    done
+    (( ${#GPU_LINES[@]} > 0 )) || GPU_LINES+=("No supported GPU telemetry detected")
+}
+
+# ============================================================
+# RAM / SWAP
+# ============================================================
+
+read_memory() {
+
+    read -r MEM_TOTAL MEM_AVAILABLE SWAP_TOTAL SWAP_FREE < <(
+        awk '
+            /^MemTotal:/     {mt=$2}
+            /^MemAvailable:/ {ma=$2}
+            /^SwapTotal:/    {st=$2}
+            /^SwapFree:/     {sf=$2}
+            END {print mt, ma, st, sf}
+        ' /proc/meminfo
+    )
+
+    RAM_USED=$(awk -v t="$MEM_TOTAL" -v a="$MEM_AVAILABLE" \
+        'BEGIN {printf "%.1f", (t-a)/1048576}')
+
+    RAM_TOTAL=$(awk -v t="$MEM_TOTAL" \
+        'BEGIN {printf "%.1f", t/1048576}')
+
+    RAM_PERCENT=$((100 * (MEM_TOTAL - MEM_AVAILABLE) / MEM_TOTAL))
+
+    SWAP_USED=$(awk -v t="$SWAP_TOTAL" -v f="$SWAP_FREE" \
+        'BEGIN {printf "%.1f", (t-f)/1048576}')
+
+    SWAP_TOTAL_GB=$(awk -v t="$SWAP_TOTAL" \
+        'BEGIN {printf "%.1f", t/1048576}')
+}
+
+# ============================================================
+# DYNAMIC CPU TOPOLOGY / FORMATTERS
+# ============================================================
+
+discover_cpu_topology() {
+    CPU_IDS=()
+    local list part first last id line
+    if [[ -r /sys/devices/system/cpu/online ]]; then
+        read -r list < /sys/devices/system/cpu/online
+        IFS=',' read -ra parts <<< "$list"
+        for part in "${parts[@]}"; do
+            if [[ "$part" == *-* ]]; then
+                first=${part%-*}; last=${part#*-}
+                [[ "$first" =~ ^[0-9]+$ && "$last" =~ ^[0-9]+$ ]] || continue
+                for ((id=first; id<=last; id++)); do CPU_IDS+=("$id"); done
+            elif [[ "$part" =~ ^[0-9]+$ ]]; then CPU_IDS+=("$part"); fi
+        done
+    fi
+    if (( ${#CPU_IDS[@]} == 0 )); then
+        while read -r line; do
+            [[ "$line" =~ ^cpu([0-9]+)[[:space:]] ]] && CPU_IDS+=("${BASH_REMATCH[1]}")
+        done < /proc/stat
+    fi
+    CPU_COUNT=${#CPU_IDS[@]}
+    CPU_MODEL=$(awk -F ': ' '/^(model name|Hardware)[[:space:]]*:/ {print $2; exit}' /proc/cpuinfo)
+    [[ -n "$CPU_MODEL" ]] || CPU_MODEL=$(< /proc/device-tree/model 2>/dev/null) || CPU_MODEL="Unknown CPU"
+
+    local cpu package core key core_type max_freq min_freq freq_file freq
+    local -A physical_seen=() p_seen=() e_seen=() freq_by_core=() freq_core_count=()
+    CPU_PCORE_COUNT=0; CPU_ECORE_COUNT=0; CPU_OTHER_CORE_COUNT=0
+    CPU_TOPOLOGY_MODE="generic"
+
+    for cpu in "${CPU_IDS[@]}"; do
+        package=0; core="$cpu"
+        [[ -r "/sys/devices/system/cpu/cpu${cpu}/topology/physical_package_id" ]] && read -r package < "/sys/devices/system/cpu/cpu${cpu}/topology/physical_package_id"
+        [[ -r "/sys/devices/system/cpu/cpu${cpu}/topology/core_id" ]] && read -r core < "/sys/devices/system/cpu/cpu${cpu}/topology/core_id"
+        key="${package}:${core}"
+        physical_seen[$key]=1
+
+        if [[ -z "${freq_by_core[$key]+x}" ]]; then
+            max_freq=""
+            for freq_file in "/sys/devices/system/cpu/cpu${cpu}/cpufreq/cpuinfo_max_freq" "/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_max_freq"; do
+                if [[ -r "$freq_file" ]]; then
+                    read -r max_freq < "$freq_file"
+                    [[ "$max_freq" =~ ^[0-9]+$ ]] && break
+                    max_freq=""
+                fi
+            done
+            if [[ "$max_freq" =~ ^[0-9]+$ ]]; then
+                freq_by_core[$key]="$max_freq"
+                freq_core_count[$max_freq]=$(( ${freq_core_count[$max_freq]:-0} + 1 ))
+            fi
+        fi
+
+        if [[ -r "/sys/devices/system/cpu/cpu${cpu}/topology/core_type" ]]; then
+            read -r core_type < "/sys/devices/system/cpu/cpu${cpu}/topology/core_type"
+            case "$core_type" in 1) e_seen[$key]=1 ;; 2) p_seen[$key]=1 ;; esac
+        fi
+    done
+
+    CPU_PHYSICAL_COUNT=${#physical_seen[@]}
+    CPU_PCORE_COUNT=${#p_seen[@]}; CPU_ECORE_COUNT=${#e_seen[@]}
+    if (( CPU_PCORE_COUNT + CPU_ECORE_COUNT > 0 )); then
+        CPU_TOPOLOGY_MODE="kernel core_type"
+    else
+        local -a freq_values=()
+        for freq in "${!freq_core_count[@]}"; do freq_values+=("$freq"); done
+        if (( ${#freq_values[@]} == 2 )); then
+            if (( ${freq_values[0]} > ${freq_values[1]} )); then
+                max_freq=${freq_values[0]}; min_freq=${freq_values[1]}
+            else
+                max_freq=${freq_values[1]}; min_freq=${freq_values[0]}
+            fi
+            if (( min_freq > 0 && max_freq * 100 >= min_freq * 115 )); then
+                CPU_PCORE_COUNT=${freq_core_count[$max_freq]}
+                CPU_ECORE_COUNT=${freq_core_count[$min_freq]}
+                CPU_TOPOLOGY_MODE="maximum-frequency heuristic"
+            fi
+        fi
+    fi
+}
+
+format_cpu_topology() {
+    if [[ "$CPU_TOPOLOGY_MODE" == "kernel core_type" || "$CPU_TOPOLOGY_MODE" == "maximum-frequency heuristic" ]]; then
+        printf 'CPU topology: %s physical cores | %s logical CPUs | P-cores: %s | E-cores: %s (%s)' \
+            "$CPU_PHYSICAL_COUNT" "$CPU_COUNT" "$CPU_PCORE_COUNT" "$CPU_ECORE_COUNT" "$CPU_TOPOLOGY_MODE"
+    else
+        printf 'CPU topology: %s physical cores | %s logical CPUs | core-type classification unavailable' \
+            "$CPU_PHYSICAL_COUNT" "$CPU_COUNT"
+    fi
+}
+
+format_cpu_usage_rows() {
+    local cpu value count=0 output=""
+    for cpu in "${CPU_IDS[@]}"; do
+        value="${CPU_USAGE[$cpu]:-0}"
+        printf -v item "CPU%-3s:%3s%%" "$cpu" "$value"
+        output+="$item  "
+        ((++count))
+        if (( count % 8 == 0 )); then printf '%s\n' "$output"; output=""; fi
+    done
+    [[ -n "$output" ]] && printf '%s\n' "$output"
+}
+
+format_core_temperatures() {
+    local core output="Core temperatures: " count=0
+    for core in $(printf '%s\n' "${!CORE_TEMP[@]}" | sort -n); do
+        output+="Core${core}:${CORE_TEMP[$core]}C  "
+        ((++count))
+        if (( count % 8 == 0 )); then printf '%s\n' "$output"; output="Core temperatures: "; fi
+    done
+    [[ "$count" -eq 0 ]] && output+="N/A"
+    [[ -n "$output" && "$output" != "Core temperatures: " ]] && printf '%s\n' "$output"
+}
+
+# ============================================================
+# HOOFDSCHERM
+# ============================================================
+
+render() {
+
+    ROW=0
+
+    local fans temps
+    local fan
+    local time_now
+    local label line
+
+    time_now=$(date '+%H:%M:%S')
+
+    # Sensoren uitlezen
+    update_cpu_usage
+    read_cpu_temperatures
+    read_board_sensors
+    read_cpu_frequency
+    read_cpuidle
+    read_gpu
+    read_memory
+    read_generic_hwmon
+    read_cpu_throttling
+    read_network
+
+    # --------------------------------------------------------
+    # HEADER
+    # --------------------------------------------------------
+
+    put "============================ GAMEMON ============================"
+    put "Host: $(hostname) | Kernel: $(uname -r) | $time_now"
+    put "------------------------------------------------------------------"
+
+    # --------------------------------------------------------
+    # CPU
+    # --------------------------------------------------------
+
+    put "CPU - ${CPU_MODEL} (${CPU_COUNT} online logical CPUs)"
+    put "$(format_cpu_topology)"
+
+    put "CPU Usage: ${CPU_TOTAL}%"
+
+    put "Package: ${PACKAGE_TEMP} C | Hottest Core: ${HOTTEST_CORE} C | Average Frequency: ${AVG_FREQ} MHz"
+
+    put "CPU Vcore (NCT6798D): ${VCORE} V"
+
+    put "CPU idle states (gemiddelde per logische CPU): C1 ${CSTATE_C1}% | C2 ${CSTATE_C2}% | C3 ${CSTATE_C3}%"
+    put "CPU throttling: ${CPU_THROTTLE_COUNT} events | ${CPU_THROTTLE_TIME} ms total"
+    put "Intel P-state: ${PSTATE_STATUS} | min ${PSTATE_MIN}% | max ${PSTATE_MAX}%"
+
+    put "LOGICAL PROCESSORS"
+
+    while IFS= read -r line; do put "$line"; done < <(format_cpu_usage_rows)
+    while IFS= read -r line; do put "$line"; done < <(format_core_temperatures)
+
+    put "------------------------------------------------------------------"
+
+    # --------------------------------------------------------
+    # MOEDERBORD
+    # --------------------------------------------------------
+
+    put "MOTHERBOARD / COOLING"
+
+    fans="Fans: "
+
+    for fan in fan1 fan2 fan3 fan4 fan5 fan6 fan7; do
+
+        fans+="${fan}: ${FAN_RPM[$fan]:-N/A} RPM  "
+    done
+
+    put "$fans"
+
+    temps="Board temperatures: "
+
+    for label in SYSTIN AUXTIN0 AUXTIN1 AUXTIN2 AUXTIN3 "PECI Agent 0" AUXTIN4; do
+
+        if [[ -n "${BOARD_TEMP[$label]+x}" ]]; then
+            temps+="${label}: ${BOARD_TEMP[$label]} C  "
+        fi
+    done
+
+    put "$temps"
+    for line in "${HWMON_TEMP_LINES[@]}"; do put "Temperature: $line"; done
+    for line in "${HWMON_VOLT_LINES[@]}"; do put "Voltage: $line"; done
+
+    put "------------------------------------------------------------------"
+
+    # --------------------------------------------------------
+    # NVIDIA GPU
+    # --------------------------------------------------------
+
+    put "GRAPHICS / GPU"
+
+    for line in "${GPU_LINES[@]}"; do put "$line"; done
+
+    put "------------------------------------------------------------------"
+    put "NETWORK"
+    for line in "${NETWORK_LINES[@]}"; do put "$line"; done
+
+    put "------------------------------------------------------------------"
+
+    # --------------------------------------------------------
+    # MEMORY
+    # --------------------------------------------------------
+
+    put "MEMORY"
+
+    put "RAM: ${RAM_USED} / ${RAM_TOTAL} GiB (${RAM_PERCENT}%)"
+
+    put "Swap: ${SWAP_USED} / ${SWAP_TOTAL_GB} GiB"
+
+    put "------------------------------------------------------------------"
+
+    put "Refresh: ${REFRESH}s | CTRL+C to exit"
+
+    local rows
+    rows=$(tput lines 2>/dev/null || printf '24')
+    (( rows < 1 )) && rows=24
+    (( ROW >= rows )) && ROW=$((rows - 1))
+    tput cup "$ROW" 0
+}
+
+# ============================================================
+# START
+# ============================================================
+
+discover_cpu_topology
+update_cpu_usage
+
+while true; do
+
+    render
+    sleep "$REFRESH"
+
+done
