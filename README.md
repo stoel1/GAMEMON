@@ -2,28 +2,26 @@
 
 GAMEMON is a terminal-based hardware monitor written in Bash, initially developed for **Red Hat Enterprise Linux 10**.
 
-The current development baseline targets:
+GAMEMON is being generalized to run across different Linux PCs. CPU topology and online logical processors are discovered at runtime, memory and swap are read from `/proc/meminfo`, and GPU detection supports NVIDIA through `nvidia-smi` plus best-effort AMD/Intel DRM sysfs telemetry.
 
-- Intel Core i9-13900K (hybrid P-core/E-core CPU)
-- ASRock Z790 LiveMixer motherboard with Nuvoton NCT6798D monitoring chip
-- NVIDIA GeForce RTX 5070
-
-It reads Linux kernel interfaces directly and uses `nvidia-smi` for NVIDIA telemetry.
+The original development and validation machine is an Intel Core i9-13900K, ASRock Z790 LiveMixer and NVIDIA GeForce RTX 5070. Other hardware combinations still need testing.
 
 ## Current features
 
 - Overall CPU utilization and per-logical-CPU utilization
-- CPU package and selected P-core/E-core temperatures via `coretemp`
-- Motherboard temperatures, fan RPM and a candidate Vcore reading via `nct6798`
-- CPU average/active frequency, busy percentage, IPC, package/core power and C-state residency via `turbostat` when permitted
-- `/proc/cpuinfo` frequency fallback when `turbostat` is unavailable
-- NVIDIA GPU utilization, temperature, graphics/memory clocks, power and VRAM
-- RAM and swap usage
+- Dynamic online logical-CPU discovery and per-logical-CPU utilization
+- CPU package/core temperatures from supported hwmon labels (including Intel `coretemp` and AMD `k10temp` where exposed)
+- CPU frequency from cpufreq sysfs with `/proc/cpuinfo` fallback
+- C1/C2/C3 idle residency from cpuidle sysfs where exposed
+- Motherboard temperatures, fan RPM and board-reported voltage from supported hwmon devices (currently Nuvoton NCT6798D-specific mappings)
+- NVIDIA GPU telemetry through `nvidia-smi`, including multiple NVIDIA adapters
+- Best-effort AMD/Intel GPU utilization, temperature, power and VRAM telemetry through DRM sysfs where the driver exposes those files
+- RAM and swap usage from `/proc/meminfo`
 - Full-screen terminal display with one-second refresh and Ctrl+C exit
 
 ## Project status
 
-This repository is the initial source and documentation baseline. It is **not yet a stable release**. The monitor currently contains hardware-specific core mapping for the i9-13900K and NCT6798D. Dynamic topology discovery, broader sensor support, configurable refresh intervals, improved error handling and `turbostat` integration are planned.
+This repository is under active development and is **not yet a stable release**. CPU topology and GPU discovery are now dynamic, but sensor coverage varies by kernel, driver and hardware. Motherboard fan/voltage mappings remain board-specific. Broader hardware testing, improved error handling, configurable refresh intervals and a test harness are still planned.
 
 The NCT6798D `in0_input` voltage is displayed as a board-reported Vcore candidate. Sensor scaling and calibration can vary by motherboard; treat it as an indicative reading, not a calibrated measurement.
 
@@ -33,8 +31,8 @@ The NCT6798D `in0_input` voltage is displayed as a board-reported Vcore candidat
 - Bash 4 or newer
 - `awk`, `cat`, `date`, `hostname`, `tput` and standard core utilities
 - Linux hwmon interfaces exposed under `/sys/class/hwmon`
-- Optional: `turbostat` for additional CPU telemetry (runs without `sudo`; unavailable counters fall back gracefully)
-- Optional: NVIDIA driver utilities providing `nvidia-smi`
+- Optional: NVIDIA driver utilities providing `nvidia-smi` for full NVIDIA telemetry
+- Optional: DRM sysfs telemetry for AMD/Intel GPUs (availability depends on the kernel driver)
 
 On RHEL, install the basic utilities if needed:
 
