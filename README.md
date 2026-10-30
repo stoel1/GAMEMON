@@ -9,7 +9,8 @@ The original development and validation machine is an Intel Core i9-13900K, ASRo
 ## Current features
 
 - Overall CPU utilization and per-logical-CPU utilization
-- Dynamic online logical-CPU discovery and per-logical-CPU utilization
+- Dynamic online logical-CPU discovery, physical-core counting and per-logical-CPU utilization
+- Intel hybrid P-core/E-core classification through Linux `topology/core_type` when the kernel exposes it
 - CPU package/core temperatures from supported hwmon labels (including Intel `coretemp` and AMD `k10temp` where exposed)
 - CPU frequency from cpufreq sysfs with `/proc/cpuinfo` fallback
 - C1/C2/C3 idle residency from cpuidle sysfs where exposed
