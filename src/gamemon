@@ -22,6 +22,11 @@ PACKAGE_TEMP="N/A"
 HOTTEST_CORE="N/A"
 CPU_MODEL="Unknown CPU"
 CPU_COUNT=0
+CPU_PHYSICAL_COUNT=0
+CPU_PCORE_COUNT=0
+CPU_ECORE_COUNT=0
+CPU_OTHER_CORE_COUNT=0
+CPU_TOPOLOGY_MODE="generic"
 AVG_FREQ=0
 VCORE="N/A"
 
@@ -431,6 +436,53 @@ discover_cpu_topology() {
     CPU_COUNT=${#CPU_IDS[@]}
     CPU_MODEL=$(awk -F ': ' '/^(model name|Hardware)[[:space:]]*:/ {print $2; exit}' /proc/cpuinfo)
     [[ -n "$CPU_MODEL" ]] || CPU_MODEL=$(< /proc/device-tree/model 2>/dev/null) || CPU_MODEL="Unknown CPU"
+
+    # Count physical cores from package_id/core_id, not from logical CPU IDs.
+    local cpu package core key core_type
+    local -A physical_seen=() p_seen=() e_seen=() other_seen=()
+    CPU_PHYSICAL_COUNT=0
+    CPU_PCORE_COUNT=0
+    CPU_ECORE_COUNT=0
+    CPU_OTHER_CORE_COUNT=0
+    CPU_TOPOLOGY_MODE="generic"
+
+    for cpu in "${CPU_IDS[@]}"; do
+        package="0"
+        core=""
+        [[ -r "/sys/devices/system/cpu/cpu${cpu}/topology/physical_package_id" ]] && read -r package < "/sys/devices/system/cpu/cpu${cpu}/topology/physical_package_id"
+        [[ -r "/sys/devices/system/cpu/cpu${cpu}/topology/core_id" ]] && read -r core < "/sys/devices/system/cpu/cpu${cpu}/topology/core_id"
+        [[ -n "$core" ]] || core="$cpu"
+        key="${package}:${core}"
+        physical_seen[$key]=1
+
+        # Linux hybrid topology: 1 = Atom/E-core, 2 = Core/P-core.
+        if [[ -r "/sys/devices/system/cpu/cpu${cpu}/topology/core_type" ]]; then
+            read -r core_type < "/sys/devices/system/cpu/cpu${cpu}/topology/core_type"
+            case "$core_type" in
+                1) e_seen[$key]=1 ;;
+                2) p_seen[$key]=1 ;;
+                *) other_seen[$key]=1 ;;
+            esac
+        fi
+    done
+
+    CPU_PHYSICAL_COUNT=${#physical_seen[@]}
+    CPU_PCORE_COUNT=${#p_seen[@]}
+    CPU_ECORE_COUNT=${#e_seen[@]}
+    CPU_OTHER_CORE_COUNT=${#other_seen[@]}
+    if (( CPU_PCORE_COUNT + CPU_ECORE_COUNT > 0 )); then
+        CPU_TOPOLOGY_MODE="Intel hybrid core_type"
+    fi
+}
+
+format_cpu_topology() {
+    if [[ "$CPU_TOPOLOGY_MODE" == "Intel hybrid core_type" ]]; then
+        printf 'CPU topology: %s physical cores | %s logical CPUs | P-cores: %s | E-cores: %s' \
+            "$CPU_PHYSICAL_COUNT" "$CPU_COUNT" "$CPU_PCORE_COUNT" "$CPU_ECORE_COUNT"
+    else
+        printf 'CPU topology: %s physical cores | %s logical CPUs | core-type classification unavailable' \
+            "$CPU_PHYSICAL_COUNT" "$CPU_COUNT"
+    fi
 }
 
 format_cpu_usage_rows() {
@@ -493,6 +545,7 @@ render() {
     # --------------------------------------------------------
 
     put "CPU - ${CPU_MODEL} (${CPU_COUNT} online logical CPUs)"
+    put "$(format_cpu_topology)"
 
     put "CPU Usage: ${CPU_TOTAL}%"
 
