@@ -149,8 +149,23 @@ fn render_snapshot(
     } else {
         logical_cpu_lines
     };
+    let package_power = if cpu.package_power_domains.is_empty() {
+        "Niet beschikbaar".to_owned()
+    } else {
+        cpu.package_power_domains
+            .iter()
+            .map(|domain| {
+                let power = domain
+                    .power_watts
+                    .map(|value| format!("{value:.1} W"))
+                    .unwrap_or_else(|| "Niet beschikbaar".to_owned());
+                format!("{}: {power}", domain.name)
+            })
+            .collect::<Vec<_>>()
+            .join(" · ")
+    };
     cpu_label.set_text(&format!(
-        "CPU\n{model}\nOnline logical CPU's: {online}\nTotaal gebruik: {utilization}\n{logical_cpu_lines}"
+        "CPU\n{model}\nOnline logical CPU's: {online}\nTotaal gebruik: {utilization}\nCPU-packagevermogen: {package_power}\n{logical_cpu_lines}"
     ));
 
     let gpu_text = match &snapshot.gpu {

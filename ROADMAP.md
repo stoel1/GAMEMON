@@ -11,7 +11,8 @@ The Rust application is the primary development target. The former Bash monitor 
 
 ## Telemetry
 - [x] CPU identity, online CPU range, aggregate/per-logical utilization, package/core topology and exported current frequency.
-- [ ] Hybrid core classification, temperature, power, throttling and idle states.
+- [ ] Hybrid core classification, temperature, throttling and idle states.
+- [x] CPU package power from dynamically discovered powercap/RAPL energy counters.
 - [x] RAM capacity, available/free memory, buffers and cache.
 - [x] Swap, memory PSI and HugePages when exported by the kernel.
 - [x] Dynamic DRM device inventory and exported busy/VRAM attributes.

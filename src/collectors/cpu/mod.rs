@@ -1,5 +1,8 @@
 use std::{collections::HashMap, fs};
 
+mod rapl;
+pub use rapl::PowerDomainSnapshot;
+
 const MAX_LOGICAL_CPUS: u32 = 4096;
 
 #[derive(Debug, Clone)]
@@ -8,6 +11,7 @@ pub struct CpuSnapshot {
     pub online: Option<String>,
     pub utilization: CpuUtilization,
     pub logical_cpus: Vec<LogicalCpuSnapshot>,
+    pub package_power_domains: Vec<PowerDomainSnapshot>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -49,6 +53,7 @@ pub struct CpuCollector {
     previous_aggregate: Option<CpuCounters>,
     previous_logical: HashMap<u32, CpuCounters>,
     topology: HashMap<u32, CpuTopology>,
+    rapl: rapl::RaplCollector,
 }
 
 impl CpuCollector {
@@ -120,6 +125,7 @@ impl CpuCollector {
             online,
             utilization,
             logical_cpus,
+            package_power_domains: self.rapl.sample(),
         }
     }
 }
