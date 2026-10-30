@@ -6,7 +6,10 @@ use gtk::{Align, Orientation};
 
 use crate::{
     collectors::{cpu, memory, network},
-    core::sampler::{self, MonitorSnapshot, SamplerConfig},
+    core::{
+        config::AppConfig,
+        sampler::{self, MonitorSnapshot, SamplerConfig},
+    },
 };
 
 const UI_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -52,7 +55,10 @@ pub fn activate(application: &Application) {
         .content(&toolbar)
         .build();
 
-    let receiver = sampler::start(SamplerConfig::default());
+    let config = AppConfig::load();
+    let receiver = sampler::start(SamplerConfig {
+        interval: config.refresh_interval(),
+    });
     let cpu_label = cpu_label.downgrade();
     let memory_label = memory_label.downgrade();
     let network_label = network_label.downgrade();

@@ -28,6 +28,10 @@ cargo run
 
 Run the collector unit tests with `cargo test`.
 
+## Configuration
+
+GAMEMON reads `gamemon/config.toml` from `$XDG_CONFIG_HOME`, or from `~/.config` when that variable is unset. For example, set `refresh_interval_ms = 1000` to sample once per second. Supported intervals are clamped to 100 ms–60 s. GAMEMON does not create or modify the configuration file automatically.
+
 On RHEL, install matching GTK4 and libadwaita development packages from enabled repositories before building.
 
 ## Hardware validation
