@@ -12,13 +12,16 @@ REFRESH=1
 
 declare -A PREV_TOTAL PREV_IDLE
 declare -A CPU_USAGE
-declare -A P_TEMP E_TEMP
+declare -A CORE_TEMP
 declare -A BOARD_TEMP FAN_RPM
+declare -a CPU_IDS GPU_LINES
 
 
 CPU_TOTAL=0
 PACKAGE_TEMP="N/A"
 HOTTEST_CORE="N/A"
+CPU_MODEL="Unknown CPU"
+CPU_COUNT=0
 AVG_FREQ=0
 VCORE="N/A"
 
@@ -120,62 +123,47 @@ update_cpu_usage() {
 }
 
 # ============================================================
-# CPU TEMPERATURES VIA HWMON
+# CPU TEMPERATURES VIA GENERIC HWMON LABELS
 # ============================================================
 
 read_cpu_temperatures() {
-
-    P_TEMP=()
-    E_TEMP=()
-
+    CORE_TEMP=()
     PACKAGE_TEMP="N/A"
-    HOTTEST_CORE=-100
-
+    HOTTEST_CORE="N/A"
     local hw name file base label value core
+    local hottest=-100
 
     for hw in /sys/class/hwmon/hwmon*; do
-
         [[ -r "$hw/name" ]] || continue
-        name=$(cat "$hw/name")
-
-        [[ "$name" == "coretemp" ]] || continue
+        name=$(<"$hw/name")
+        case "$name" in coretemp|k10temp|zenpower|cpu_thermal|soc_dts) ;; *) continue ;; esac
 
         for file in "$hw"/temp*_input; do
-
             [[ -r "$file" ]] || continue
-
             base="${file%_input}"
-            label=$(cat "${base}_label" 2>/dev/null || true)
-            value=$(cat "$file" 2>/dev/null || echo 0)
-
+            label=$(<"${base}_label" 2>/dev/null) || label=""
+            read -r value < "$file"
+            [[ "$value" =~ ^-?[0-9]+$ ]] || continue
             value=$((value / 1000))
+            (( value <= 0 )) && continue
 
-            if [[ "$label" == "Package id 0" ]]; then
-                PACKAGE_TEMP="$value"
-                continue
-            fi
-
-            if [[ "$label" =~ ^Core[[:space:]]+([0-9]+)$ ]]; then
-
-                core="${BASH_REMATCH[1]}"
-
-                if (( value > HOTTEST_CORE )); then
-                    HOTTEST_CORE=$value
-                fi
-
-                case "$core" in
-                    0|4|8|12|16|20|24|28)
-                        P_TEMP[$core]=$value
-                        ;;
-                    3[2-9]|4[0-7])
-                        E_TEMP[$core]=$value
-                        ;;
-                esac
-            fi
+            case "$label" in
+                "Package id "*|Tctl|Tdie|"CPU Package"|"CPU Die")
+                    PACKAGE_TEMP="$value"
+                    ;;
+                Core\ *)
+                    core="${label#Core }"
+                    [[ "$core" =~ ^[0-9]+$ ]] && CORE_TEMP[$core]="$value"
+                    ;;
+                *)
+                    [[ "$PACKAGE_TEMP" == "N/A" && "$name" == "k10temp" ]] && PACKAGE_TEMP="$value"
+                    ;;
+            esac
+            (( value > hottest )) && hottest=$value
         done
     done
 
-    [[ "$HOTTEST_CORE" == "-100" ]] && HOTTEST_CORE="N/A"
+    (( hottest > -100 )) && HOTTEST_CORE="$hottest"
 }
 
 # ============================================================
@@ -334,30 +322,61 @@ read_cpuidle() {
 }
 
 # ============================================================
-# NVIDIA GPU
+# GPU DETECTION: NVIDIA, AMD AND INTEL (BEST EFFORT)
 # ============================================================
 
 read_gpu() {
+    GPU_LINES=()
+    local data line name util temp core memclock power used total
+    local dev vendor busy mem_used mem_total hw file label temp_value power_value
 
-    command -v nvidia-smi >/dev/null 2>&1 || return
+    # NVIDIA: nvidia-smi supports multiple adapters in one query.
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        data=$(nvidia-smi --query-gpu=name,utilization.gpu,temperature.gpu,clocks.gr,clocks.mem,power.draw,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null) || data=""
+        if [[ -n "$data" ]]; then
+            while IFS= read -r line; do
+                IFS=',' read -r name util temp core memclock power used total <<< "$line"
+                name="${name# }"; name="${name% }"
+                util="${util// /}"; temp="${temp// /}"; core="${core// /}"
+                memclock="${memclock// /}"; power="${power// /}"
+                used="${used// /}"; total="${total// /}"
+                GPU_LINES+=("${name}: ${util}% | ${temp} C | Core ${core} MHz | Memory ${memclock} MHz | ${power} W | VRAM ${used}/${total} MiB")
+            done <<< "$data"
+            return
+        fi
+    fi
 
-    local data
-
-    data=$(nvidia-smi \
-        --query-gpu=utilization.gpu,temperature.gpu,clocks.gr,clocks.mem,power.draw,memory.used,memory.total \
-        --format=csv,noheader,nounits 2>/dev/null) || return
-
-    IFS=',' read -r \
-        GPU_UTIL GPU_TEMP GPU_CORE GPU_MEM_CLOCK \
-        GPU_POWER VRAM_USED VRAM_TOTAL <<< "$data"
-
-    GPU_UTIL="${GPU_UTIL// /}"
-    GPU_TEMP="${GPU_TEMP// /}"
-    GPU_CORE="${GPU_CORE// /}"
-    GPU_MEM_CLOCK="${GPU_MEM_CLOCK// /}"
-    GPU_POWER="${GPU_POWER// /}"
-    VRAM_USED="${VRAM_USED// /}"
-    VRAM_TOTAL="${VRAM_TOTAL// /}"
+    # Generic DRM telemetry for AMD and Intel; unsupported fields remain N/A.
+    for dev in /sys/class/drm/card[0-9]/device; do
+        [[ -e "$dev" ]] || continue
+        vendor="$(<"$dev/vendor" 2>/dev/null)"
+        case "$vendor" in
+            0x1002) name="AMD GPU" ;;
+            0x8086) name="Intel GPU" ;;
+            0x10de) name="NVIDIA GPU" ;;
+            *) continue ;;
+        esac
+        busy="N/A"; mem_used="N/A"; mem_total="N/A"; temp="N/A"; power="N/A"
+        [[ -r "$dev/gpu_busy_percent" ]] && read -r busy < "$dev/gpu_busy_percent"
+        [[ -r "$dev/gt_busy_percent" ]] && read -r busy < "$dev/gt_busy_percent"
+        [[ -r "$dev/mem_info_vram_used" ]] && { read -r mem_used < "$dev/mem_info_vram_used"; mem_used=$((mem_used / 1048576)); }
+        [[ -r "$dev/mem_info_vram_total" ]] && { read -r mem_total < "$dev/mem_info_vram_total"; mem_total=$((mem_total / 1048576)); }
+        for hw in "$dev"/hwmon/hwmon*; do
+            [[ -d "$hw" ]] || continue
+            for file in "$hw"/temp*_input; do
+                [[ -r "$file" ]] || continue
+                read -r temp_value < "$file"
+                [[ "$temp_value" =~ ^[0-9]+$ ]] && temp=$((temp_value / 1000)) && break
+            done
+            for file in "$hw"/power*_average "$hw"/power*_input; do
+                [[ -r "$file" ]] || continue
+                read -r power_value < "$file"
+                [[ "$power_value" =~ ^[0-9]+$ ]] && power=$(awk -v p="$power_value" 'BEGIN {printf "%.1f",p/1000000}') && break
+            done
+        done
+        GPU_LINES+=("${name}: ${busy}% | ${temp} C | Power ${power} W | VRAM ${mem_used}/${mem_total} MiB")
+    done
+    (( ${#GPU_LINES[@]} > 0 )) || GPU_LINES+=("No supported GPU telemetry detected")
 }
 
 # ============================================================
@@ -392,64 +411,56 @@ read_memory() {
 }
 
 # ============================================================
-# LOGISCHE PROCESSORS
+# DYNAMIC CPU TOPOLOGY / FORMATTERS
 # ============================================================
 
-format_cpu_usage() {
+discover_cpu_topology() {
+    CPU_IDS=()
+    local list part first last id line
+    if [[ -r /sys/devices/system/cpu/online ]]; then
+        read -r list < /sys/devices/system/cpu/online
+        IFS=',' read -ra parts <<< "$list"
+        for part in "${parts[@]}"; do
+            if [[ "$part" == *-* ]]; then
+                first=${part%-*}; last=${part#*-}
+                [[ "$first" =~ ^[0-9]+$ && "$last" =~ ^[0-9]+$ ]] || continue
+                for ((id=first; id<=last; id++)); do CPU_IDS+=("$id"); done
+            elif [[ "$part" =~ ^[0-9]+$ ]]; then
+                CPU_IDS+=("$part")
+            fi
+        done
+    fi
+    if (( ${#CPU_IDS[@]} == 0 )); then
+        while read -r line; do
+            [[ "$line" =~ ^cpu([0-9]+)[[:space:]] ]] && CPU_IDS+=("${BASH_REMATCH[1]}")
+        done < /proc/stat
+    fi
+    CPU_COUNT=${#CPU_IDS[@]}
+    CPU_MODEL=$(awk -F ': ' '/^(model name|Hardware)[[:space:]]*:/ {print $2; exit}' /proc/cpuinfo)
+    [[ -n "$CPU_MODEL" ]] || CPU_MODEL=$(< /proc/device-tree/model 2>/dev/null) || CPU_MODEL="Unknown CPU"
+}
 
-    local start=$1
-    local end=$2
-    local cpu value
-    local output=""
-
-    for ((cpu=start; cpu<=end; cpu++)); do
-
+format_cpu_usage_rows() {
+    local cpu value count=0 output=""
+    for cpu in "${CPU_IDS[@]}"; do
         value="${CPU_USAGE[$cpu]:-0}"
-
-        printf -v item "CPU%-2d:%3s%%" "$cpu" "$value"
-
+        printf -v item "CPU%-3s:%3s%%" "$cpu" "$value"
         output+="$item  "
+        ((++count))
+        if (( count % 8 == 0 )); then printf '%s\n' "$output"; output=""; fi
     done
-
-    printf '%s' "$output"
+    [[ -n "$output" ]] && printf '%s\n' "$output"
 }
 
-# ============================================================
-# P-CORES
-# ============================================================
-
-format_p_cores() {
-
-    local output="P-cores: "
-    local core
-
-    for core in 0 4 8 12 16 20 24 28; do
-
-        output+="P${core}:"
-        output+="${P_TEMP[$core]:-N/A}C  "
+format_core_temperatures() {
+    local core output="Core temperatures: " count=0
+    for core in $(printf '%s\n' "${!CORE_TEMP[@]}" | sort -n); do
+        output+="Core${core}:${CORE_TEMP[$core]}C  "
+        ((++count))
+        if (( count % 8 == 0 )); then printf '%s\n' "$output"; output="Core temperatures: "; fi
     done
-
-    printf '%s' "$output"
-}
-
-# ============================================================
-# E-CORES
-# ============================================================
-
-format_e_cores() {
-
-    local start=$1
-    local end=$2
-    local core
-    local output=""
-
-    for ((core=start; core<=end; core++)); do
-
-        output+="E${core}:"
-        output+="${E_TEMP[$core]:-N/A}C  "
-    done
-
-    printf '%s' "$output"
+    [[ "$count" -eq 0 ]] && output+="N/A"
+    [[ -n "$output" && "$output" != "Core temperatures: " ]] && printf '%s\n' "$output"
 }
 
 # ============================================================
@@ -460,13 +471,11 @@ render() {
 
     ROW=0
 
-    local cpu_model
     local fans temps
     local fan
     local time_now
-    local label
+    local label line
 
-    cpu_model=$(awk -F ': ' '/model name/ {print $2; exit}' /proc/cpuinfo)
     time_now=$(date '+%H:%M:%S')
 
     # Sensoren uitlezen
@@ -490,7 +499,7 @@ render() {
     # CPU
     # --------------------------------------------------------
 
-    put "CPU - $cpu_model"
+    put "CPU - ${CPU_MODEL} (${CPU_COUNT} online logical CPUs)"
 
     put "CPU Usage: ${CPU_TOTAL}%"
 
@@ -502,15 +511,8 @@ render() {
 
     put "LOGICAL PROCESSORS"
 
-    put "$(format_cpu_usage 0 7)"
-    put "$(format_cpu_usage 8 15)"
-    put "$(format_cpu_usage 16 23)"
-    put "$(format_cpu_usage 24 31)"
-
-    put "$(format_p_cores)"
-
-    put "$(format_e_cores 32 39)"
-    put "$(format_e_cores 40 47)"
+    while IFS= read -r line; do put "$line"; done < <(format_cpu_usage_rows)
+    while IFS= read -r line; do put "$line"; done < <(format_core_temperatures)
 
     put "------------------------------------------------------------------"
 
@@ -548,11 +550,7 @@ render() {
 
     put "NVIDIA GPU"
 
-    put "GPU Usage: ${GPU_UTIL}% | Temperature: ${GPU_TEMP} C | Core Clock: ${GPU_CORE} MHz"
-
-    put "Memory Clock: ${GPU_MEM_CLOCK} MHz | Power: ${GPU_POWER} W"
-
-    put "VRAM: ${VRAM_USED} / ${VRAM_TOTAL} MiB"
+    for line in "${GPU_LINES[@]}"; do put "$line"; done
 
     put "------------------------------------------------------------------"
 
@@ -578,6 +576,7 @@ render() {
 # START
 # ============================================================
 
+discover_cpu_topology
 update_cpu_usage
 
 while true; do
