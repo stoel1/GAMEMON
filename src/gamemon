@@ -21,6 +21,19 @@ HOTTEST_CORE="N/A"
 AVG_FREQ=0
 VCORE="N/A"
 
+TURBOSTAT_OK=0
+TURBOSTAT_STATUS="Not detected"
+TSTAT_AVG_MHZ="N/A"
+TSTAT_BUSY="N/A"
+TSTAT_BZY_MHZ="N/A"
+TSTAT_IPC="N/A"
+TSTAT_PKG_TMP="N/A"
+TSTAT_PKG_WATT="N/A"
+TSTAT_CORE_WATT="N/A"
+TSTAT_C1="N/A"
+TSTAT_C6="N/A"
+TSTAT_C7="N/A"
+
 GPU_UTIL="N/A"
 GPU_TEMP="N/A"
 GPU_CORE="N/A"
@@ -261,6 +274,38 @@ read_cpu_frequency() {
 }
 
 # ============================================================
+# TURBOSTAT TELEMETRY (NORMAL USER)
+# ============================================================
+
+read_turbostat() {
+    TURBOSTAT_OK=0
+    TURBOSTAT_STATUS="Unavailable without required permissions"
+    command -v turbostat >/dev/null 2>&1 || { TURBOSTAT_STATUS="Not installed"; return 1; }
+
+    local output parsed
+    output=$(turbostat --quiet --interval "$REFRESH" --num_iterations 1 --show "Core,CPU,Avg_MHz,Busy%,Bzy_MHz,IPC,PkgTmp,PkgWatt,CorWatt,CPU%c1,CPU%c6,CPU%c7" 2>/dev/null) || return 1
+
+    parsed=$(awk '
+        NR == 1 { for (i=1; i<=NF; i++) col[$i]=i; next }
+        $1 == "-" && $2 == "-" {
+            n[1]="Avg_MHz"; n[2]="Busy%"; n[3]="Bzy_MHz"; n[4]="IPC"
+            n[5]="PkgTmp"; n[6]="PkgWatt"; n[7]="CorWatt"
+            n[8]="CPU%c1"; n[9]="CPU%c6"; n[10]="CPU%c7"
+            for (i=1; i<=10; i++) printf "%s%s", (i==1 ? "" : "|"), (col[n[i]] ? $(col[n[i]]) : "N/A")
+            found=1; exit
+        }
+        END { if (!found) exit 1 }
+    ' <<< "$output") || { TURBOSTAT_STATUS="Unrecognized output"; return 1; }
+
+    IFS="|" read -r TSTAT_AVG_MHZ TSTAT_BUSY TSTAT_BZY_MHZ TSTAT_IPC TSTAT_PKG_TMP TSTAT_PKG_WATT TSTAT_CORE_WATT TSTAT_C1 TSTAT_C6 TSTAT_C7 <<< "$parsed"
+    TURBOSTAT_OK=1
+    TURBOSTAT_STATUS="Active (normal user)"
+    [[ "$TSTAT_AVG_MHZ" =~ ^[0-9]+([.][0-9]+)?$ ]] && AVG_FREQ="$TSTAT_AVG_MHZ"
+    [[ "$TSTAT_PKG_TMP" =~ ^-?[0-9]+([.][0-9]+)?$ ]] && PACKAGE_TEMP="$TSTAT_PKG_TMP"
+    return 0
+}
+
+# ============================================================
 # NVIDIA GPU
 # ============================================================
 
@@ -401,6 +446,7 @@ render() {
     read_cpu_temperatures
     read_board_sensors
     read_cpu_frequency
+    read_turbostat
     read_gpu
     read_memory
 
@@ -423,6 +469,14 @@ render() {
     put "Package: ${PACKAGE_TEMP} C | Hottest Core: ${HOTTEST_CORE} C | Average Frequency: ${AVG_FREQ} MHz"
 
     put "CPU Vcore (NCT6798D): ${VCORE} V"
+
+    if (( TURBOSTAT_OK )); then
+        put "turbostat: Avg ${TSTAT_AVG_MHZ} MHz | Busy ${TSTAT_BUSY}% | Busy freq ${TSTAT_BZY_MHZ} MHz | IPC ${TSTAT_IPC}"
+        put "CPU power: Package ${TSTAT_PKG_WATT} W | Cores ${TSTAT_CORE_WATT} W | Package temp ${TSTAT_PKG_TMP} C"
+        put "C-states: C1 ${TSTAT_C1}% | C6 ${TSTAT_C6}% | C7 ${TSTAT_C7}%"
+    else
+        put "turbostat: ${TURBOSTAT_STATUS} | using hwmon and /proc fallbacks"
+    fi
 
     put "LOGICAL PROCESSORS"
 
@@ -506,7 +560,7 @@ update_cpu_usage
 
 while true; do
 
-    sleep "$REFRESH"
     render
+    (( TURBOSTAT_OK )) || sleep "$REFRESH"
 
 done
