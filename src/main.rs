@@ -2,6 +2,7 @@ mod app;
 mod collectors;
 mod core;
 
+use adw::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 fn main() {
