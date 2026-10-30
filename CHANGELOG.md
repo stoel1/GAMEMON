@@ -7,6 +7,7 @@ All notable project changes will be recorded here.
 - Added the currently supplied GAMEMON Bash monitor as `src/gamemon`.
 - Documented current telemetry, hardware assumptions and known limitations.
 - Added an initial RPM packaging spec and packaging notes.
+- Integrated optional unprivileged `turbostat` sampling with graceful fallback to `/proc` and hwmon data.
 - Established a roadmap for sensor abstraction, `turbostat` integration and UI improvements.
 
 This is a development baseline, not a tagged stable release.
