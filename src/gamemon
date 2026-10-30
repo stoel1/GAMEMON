@@ -15,24 +15,13 @@ declare -A CPU_USAGE
 declare -A P_TEMP E_TEMP
 declare -A BOARD_TEMP FAN_RPM
 
+
 CPU_TOTAL=0
 PACKAGE_TEMP="N/A"
 HOTTEST_CORE="N/A"
 AVG_FREQ=0
 VCORE="N/A"
 
-TURBOSTAT_OK=0
-TURBOSTAT_STATUS="Not detected"
-TSTAT_AVG_MHZ="N/A"
-TSTAT_BUSY="N/A"
-TSTAT_BZY_MHZ="N/A"
-TSTAT_IPC="N/A"
-TSTAT_PKG_TMP="N/A"
-TSTAT_PKG_WATT="N/A"
-TSTAT_CORE_WATT="N/A"
-TSTAT_C1="N/A"
-TSTAT_C6="N/A"
-TSTAT_C7="N/A"
 
 GPU_UTIL="N/A"
 GPU_TEMP="N/A"
@@ -254,55 +243,69 @@ read_board_sensors() {
 }
 
 # ============================================================
-# CPU FREQUENTIE
+# CPU FREQUENTIE VIA SYSFS
 # ============================================================
 
 read_cpu_frequency() {
-
-    AVG_FREQ=$(awk '
-        /^cpu MHz/ {
-            sum += $4
-            count++
-        }
-        END {
-            if (count > 0)
-                printf "%.0f", sum / count
-            else
-                print 0
-        }
-    ' /proc/cpuinfo)
+    local file value sum=0 count=0
+    for file in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq; do
+        [[ -r "$file" ]] || continue
+        read -r value < "$file"
+        [[ "$value" =~ ^[0-9]+$ ]] || continue
+        sum=$((sum + value))
+        count=$((count + 1))
+    done
+    if (( count > 0 )); then
+        AVG_FREQ=$(awk -v s="$sum" -v c="$count" 'BEGIN {printf "%.0f", s/c/1000}')
+    else
+        AVG_FREQ=$(awk '/^cpu MHz/ {sum += $4; count++} END {if (count) printf "%.0f", sum/count; else print 0}' /proc/cpuinfo)
+    fi
 }
 
 # ============================================================
-# TURBOSTAT TELEMETRY (NORMAL USER)
+# CPU C-STATES VIA SYSFS (GEEN ROOT NODIG)
 # ============================================================
 
-read_turbostat() {
-    TURBOSTAT_OK=0
-    TURBOSTAT_STATUS="Unavailable without required permissions"
-    command -v turbostat >/dev/null 2>&1 || { TURBOSTAT_STATUS="Not installed"; return 1; }
+declare -A CPUIDLE_PREV
+CPUIDLE_PREV_NS=0
+CSTATE_C1="N/A"
+CSTATE_C2="N/A"
+CSTATE_C3="N/A"
 
-    local output parsed
-    output=$(turbostat --quiet --interval "$REFRESH" --num_iterations 1 --show "Core,CPU,Avg_MHz,Busy%,Bzy_MHz,IPC,PkgTmp,PkgWatt,CorWatt,CPU%c1,CPU%c6,CPU%c7" 2>/dev/null) || return 1
+read_cpuidle() {
+    local file value old name state now_ns elapsed_ns delta pct cpu
+    local c1_sum=0 c2_sum=0 c3_sum=0 c1_count=0 c2_count=0 c3_count=0
+    now_ns=$(date +%s%N)
+    elapsed_ns=0
+    if (( CPUIDLE_PREV_NS > 0 )); then elapsed_ns=$((now_ns - CPUIDLE_PREV_NS)); fi
 
-    parsed=$(awk '
-        NR == 1 { for (i=1; i<=NF; i++) col[$i]=i; next }
-        $1 == "-" && $2 == "-" {
-            n[1]="Avg_MHz"; n[2]="Busy%"; n[3]="Bzy_MHz"; n[4]="IPC"
-            n[5]="PkgTmp"; n[6]="PkgWatt"; n[7]="CorWatt"
-            n[8]="CPU%c1"; n[9]="CPU%c6"; n[10]="CPU%c7"
-            for (i=1; i<=10; i++) printf "%s%s", (i==1 ? "" : "|"), (col[n[i]] ? $(col[n[i]]) : "N/A")
-            found=1; exit
-        }
-        END { if (!found) exit 1 }
-    ' <<< "$output") || { TURBOSTAT_STATUS="Unrecognized output"; return 1; }
+    for file in /sys/devices/system/cpu/cpu[0-9]*/cpuidle/state*/time; do
+        [[ -r "$file" ]] || continue
+        read -r value < "$file"
+        [[ "$value" =~ ^[0-9]+$ ]] || continue
+        name=$(<"${file%/time}/name")
+        state="${name%%_*}"
+        cpu=$(printf '%s' "$file" | grep -oE 'cpu[0-9]+' | head -1)
+        [[ -n "$cpu" ]] || continue
 
-    IFS="|" read -r TSTAT_AVG_MHZ TSTAT_BUSY TSTAT_BZY_MHZ TSTAT_IPC TSTAT_PKG_TMP TSTAT_PKG_WATT TSTAT_CORE_WATT TSTAT_C1 TSTAT_C6 TSTAT_C7 <<< "$parsed"
-    TURBOSTAT_OK=1
-    TURBOSTAT_STATUS="Active (normal user)"
-    [[ "$TSTAT_AVG_MHZ" =~ ^[0-9]+([.][0-9]+)?$ ]] && AVG_FREQ="$TSTAT_AVG_MHZ"
-    [[ "$TSTAT_PKG_TMP" =~ ^-?[0-9]+([.][0-9]+)?$ ]] && PACKAGE_TEMP="$TSTAT_PKG_TMP"
-    return 0
+        if [[ -n "${CPUIDLE_PREV[$file]+x}" ]] && (( elapsed_ns > 0 )); then
+            old=${CPUIDLE_PREV[$file]}
+            delta=$((value - old))
+            (( delta < 0 )) && delta=0
+            pct=$(awk -v d="$delta" -v e="$elapsed_ns" 'BEGIN {if (e > 0) printf "%.4f", d*1000000/e; else print 0}')
+            case "$state" in
+                C1) c1_sum=$(awk -v a="$c1_sum" -v b="$pct" 'BEGIN {printf "%.4f",a+b}'); ((c1_count++)) ;;
+                C2) c2_sum=$(awk -v a="$c2_sum" -v b="$pct" 'BEGIN {printf "%.4f",a+b}'); ((c2_count++)) ;;
+                C3) c3_sum=$(awk -v a="$c3_sum" -v b="$pct" 'BEGIN {printf "%.4f",a+b}'); ((c3_count++)) ;;
+            esac
+        fi
+        CPUIDLE_PREV[$file]=$value
+    done
+
+    CPUIDLE_PREV_NS=$now_ns
+    (( c1_count > 0 )) && CSTATE_C1=$(awk -v s="$c1_sum" -v n="$c1_count" 'BEGIN {printf "%.1f",s/n}')
+    (( c2_count > 0 )) && CSTATE_C2=$(awk -v s="$c2_sum" -v n="$c2_count" 'BEGIN {printf "%.1f",s/n}')
+    (( c3_count > 0 )) && CSTATE_C3=$(awk -v s="$c3_sum" -v n="$c3_count" 'BEGIN {printf "%.1f",s/n}')
 }
 
 # ============================================================
@@ -446,7 +449,7 @@ render() {
     read_cpu_temperatures
     read_board_sensors
     read_cpu_frequency
-    read_turbostat
+    read_cpuidle
     read_gpu
     read_memory
 
@@ -470,13 +473,7 @@ render() {
 
     put "CPU Vcore (NCT6798D): ${VCORE} V"
 
-    if (( TURBOSTAT_OK )); then
-        put "turbostat: Avg ${TSTAT_AVG_MHZ} MHz | Busy ${TSTAT_BUSY}% | Busy freq ${TSTAT_BZY_MHZ} MHz | IPC ${TSTAT_IPC}"
-        put "CPU power: Package ${TSTAT_PKG_WATT} W | Cores ${TSTAT_CORE_WATT} W | Package temp ${TSTAT_PKG_TMP} C"
-        put "C-states: C1 ${TSTAT_C1}% | C6 ${TSTAT_C6}% | C7 ${TSTAT_C7}%"
-    else
-        put "turbostat: ${TURBOSTAT_STATUS} | using hwmon and /proc fallbacks"
-    fi
+    put "CPU idle states (gemiddelde per logische CPU): C1 ${CSTATE_C1}% | C2 ${CSTATE_C2}% | C3 ${CSTATE_C3}%"
 
     put "LOGICAL PROCESSORS"
 
@@ -561,6 +558,6 @@ update_cpu_usage
 while true; do
 
     render
-    (( TURBOSTAT_OK )) || sleep "$REFRESH"
+    sleep "$REFRESH"
 
 done
