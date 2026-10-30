@@ -14,8 +14,8 @@ declare -A PREV_TOTAL PREV_IDLE
 declare -A CPU_USAGE
 declare -A CORE_TEMP
 declare -A BOARD_TEMP FAN_RPM
- declare -A NET_PREV_RX NET_PREV_TX
- declare -a HWMON_TEMP_LINES HWMON_VOLT_LINES NETWORK_LINES
+declare -A NET_PREV_RX NET_PREV_TX
+declare -a HWMON_TEMP_LINES HWMON_VOLT_LINES NETWORK_LINES
 declare -a CPU_IDS GPU_LINES
 
 
@@ -50,7 +50,10 @@ VRAM_TOTAL="N/A"
 # TERMINAL
 # ============================================================
 
+SAVED_STTY=$(stty -g 2>/dev/null || true)
+
 cleanup() {
+    [[ -n "$SAVED_STTY" ]] && stty "$SAVED_STTY" 2>/dev/null
     tput cnorm 2>/dev/null
     tput rmcup 2>/dev/null
     printf '\n'
@@ -60,6 +63,7 @@ trap cleanup EXIT
 trap 'exit 0' INT TERM
 
 tput smcup 2>/dev/null
+stty -echo 2>/dev/null
 tput civis 2>/dev/null
 tput clear
 
@@ -749,8 +753,11 @@ render() {
 
     put "Refresh: ${REFRESH}s | CTRL+C to exit"
 
+    local rows
+    rows=$(tput lines 2>/dev/null || printf '24')
+    (( rows < 1 )) && rows=24
+    (( ROW >= rows )) && ROW=$((rows - 1))
     tput cup "$ROW" 0
-    printf '\033[J'
 }
 
 # ============================================================
