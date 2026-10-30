@@ -517,8 +517,8 @@ discover_cpu_topology() {
 
 format_cpu_topology() {
     if [[ "$CPU_TOPOLOGY_MODE" == "kernel core_type" || "$CPU_TOPOLOGY_MODE" == "maximum-frequency heuristic" ]]; then
-        printf 'CPU topology: %s physical cores | %s logical CPUs | P-cores: %s | E-cores: %s' \
-            "$CPU_PHYSICAL_COUNT" "$CPU_COUNT" "$CPU_PCORE_COUNT" "$CPU_ECORE_COUNT"
+        printf 'CPU topology: %s physical cores | %s logical CPUs | P-cores: %s | E-cores: %s (%s)' \
+            "$CPU_PHYSICAL_COUNT" "$CPU_COUNT" "$CPU_PCORE_COUNT" "$CPU_ECORE_COUNT" "$CPU_TOPOLOGY_MODE"
     else
         printf 'CPU topology: %s physical cores | %s logical CPUs | core-type classification unavailable' \
             "$CPU_PHYSICAL_COUNT" "$CPU_COUNT"
