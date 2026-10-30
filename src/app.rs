@@ -218,10 +218,10 @@ fn format_gpu_device(device: &gpu::GpuDeviceSnapshot) -> String {
     let pci_address = device.pci_address.as_deref().unwrap_or("PCI-adres n.b.");
     let driver = device.driver.as_deref().unwrap_or("driver n.b.");
     let source = device
-        .drm_card
-        .as_deref()
-        .map(|card| format!("DRM {card}"))
-        .unwrap_or_else(|| "NVML".to_owned());
+        .telemetry_source
+        .map(str::to_owned)
+        .or_else(|| device.drm_card.as_deref().map(|card| format!("DRM {card}")))
+        .unwrap_or_else(|| "Bron n.b.".to_owned());
     let uuid = device.uuid.as_deref().unwrap_or("UUID n.b.");
     let utilization = device
         .gpu_busy_percent

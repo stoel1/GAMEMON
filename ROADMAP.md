@@ -16,7 +16,8 @@ The Rust application is the primary development target. The former Bash monitor 
 - [x] Swap, memory PSI and HugePages when exported by the kernel.
 - [x] Dynamic DRM device inventory and exported busy/VRAM attributes.
 - [x] NVIDIA NVML telemetry for utilization, VRAM, temperature, power, clocks, fan and media engines.
-- [ ] NVIDIA fallback, PCIe link data and per-process GPU telemetry.
+- [x] NVIDIA `nvidia-smi` fallback when NVML cannot initialize.
+- [ ] GPU PCIe link data and per-process GPU telemetry.
 - [ ] AMD and Intel GPU telemetry through supported DRM interfaces.
 - [ ] Storage and NVMe telemetry.
 - [x] Network interface status/counters, throughput rates, errors and drops.

@@ -5,6 +5,7 @@ use std::{
 };
 
 mod nvml;
+mod nvidia_smi;
 
 use nvml::{DeviceMetrics as NvmlMetrics, NvmlApi};
 
@@ -18,6 +19,7 @@ pub struct GpuSnapshot {
 #[derive(Debug, Clone)]
 pub struct GpuDeviceSnapshot {
     pub drm_card: Option<String>,
+    pub telemetry_source: Option<&'static str>,
     pub uuid: Option<String>,
     pub pci_address: Option<String>,
     pub vendor_id: Option<u16>,
@@ -50,6 +52,8 @@ pub struct GpuCollector {
     last_discovery: Option<Instant>,
     nvml: Option<NvmlApi>,
     last_nvml_attempt: Option<Instant>,
+    nvidia_smi_devices: Option<Vec<NvmlMetrics>>,
+    last_nvidia_smi_attempt: Option<Instant>,
 }
 
 impl GpuCollector {
@@ -80,6 +84,17 @@ impl GpuCollector {
         }
         if let Some(nvml) = &self.nvml {
             for metrics in nvml.sample() {
+                merge_nvml_device(&mut devices, metrics);
+            }
+        } else if self
+            .last_nvidia_smi_attempt
+            .is_none_or(|last| now.duration_since(last) >= DEVICE_RESCAN_INTERVAL)
+        {
+            self.last_nvidia_smi_attempt = Some(now);
+            self.nvidia_smi_devices = Some(nvidia_smi::sample().unwrap_or_default());
+        }
+        if self.nvml.is_none() {
+            for metrics in self.nvidia_smi_devices.clone().unwrap_or_default() {
                 merge_nvml_device(&mut devices, metrics);
             }
         }
@@ -137,6 +152,7 @@ fn read_device_snapshot(device: &DiscoveredDevice) -> GpuDeviceSnapshot {
 
     GpuDeviceSnapshot {
         drm_card: Some(device.drm_card.clone()),
+        telemetry_source: None,
         uuid: None,
         pci_address,
         vendor_id,
@@ -178,6 +194,7 @@ fn merge_nvml_device(devices: &mut Vec<GpuDeviceSnapshot>, metrics: NvmlMetrics)
         None => {
             devices.push(GpuDeviceSnapshot {
                 drm_card: None,
+                telemetry_source: None,
                 uuid: None,
                 pci_address: pci_address.clone(),
                 vendor_id: Some(0x10de),
@@ -205,7 +222,7 @@ fn merge_nvml_device(devices: &mut Vec<GpuDeviceSnapshot>, metrics: NvmlMetrics)
     }
     device.uuid = metrics.uuid;
     device.vendor_id = Some(0x10de);
-    device.driver = Some("NVML".to_owned());
+    device.telemetry_source = metrics.source;
     device.model = metrics.name.or(device.model.take());
     device.gpu_busy_percent = metrics.gpu_busy_percent.or(device.gpu_busy_percent);
     device.vram_used_bytes = metrics.vram_used_bytes.or(device.vram_used_bytes);

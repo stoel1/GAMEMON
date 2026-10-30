@@ -43,8 +43,9 @@ struct NvmlMemory {
 #[repr(C, align(8))]
 struct PciInfoBuffer([u8; 256]);
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct DeviceMetrics {
+    pub source: Option<&'static str>,
     pub name: Option<String>,
     pub uuid: Option<String>,
     pub pci_address: Option<String>,
@@ -161,7 +162,10 @@ impl NvmlApi {
     }
 
     fn sample_device(&self, device: Device) -> DeviceMetrics {
-        let mut metrics = DeviceMetrics::default();
+        let mut metrics = DeviceMetrics {
+            source: Some("NVML"),
+            ..DeviceMetrics::default()
+        };
         metrics.name = self.query_string(self.get_name, device, 256);
         metrics.uuid = self.query_string(self.get_uuid, device, 80);
         metrics.pci_address = self.query_pci_address(device);
