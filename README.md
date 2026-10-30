@@ -15,7 +15,8 @@ It reads Linux kernel interfaces directly and uses `nvidia-smi` for NVIDIA telem
 - Overall CPU utilization and per-logical-CPU utilization
 - CPU package and selected P-core/E-core temperatures via `coretemp`
 - Motherboard temperatures, fan RPM and a candidate Vcore reading via `nct6798`
-- Average CPU frequency from `/proc/cpuinfo`
+- CPU average/active frequency, busy percentage, IPC, package/core power and C-state residency via `turbostat` when permitted
+- `/proc/cpuinfo` frequency fallback when `turbostat` is unavailable
 - NVIDIA GPU utilization, temperature, graphics/memory clocks, power and VRAM
 - RAM and swap usage
 - Full-screen terminal display with one-second refresh and Ctrl+C exit
@@ -32,6 +33,7 @@ The NCT6798D `in0_input` voltage is displayed as a board-reported Vcore candidat
 - Bash 4 or newer
 - `awk`, `cat`, `date`, `hostname`, `tput` and standard core utilities
 - Linux hwmon interfaces exposed under `/sys/class/hwmon`
+- Optional: `turbostat` for additional CPU telemetry (runs without `sudo`; unavailable counters fall back gracefully)
 - Optional: NVIDIA driver utilities providing `nvidia-smi`
 
 On RHEL, install the basic utilities if needed:
