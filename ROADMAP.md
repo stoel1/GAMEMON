@@ -12,8 +12,8 @@ The Rust application is the primary development target. The former Bash monitor 
 ## Telemetry
 - [x] CPU identity, online CPU range and aggregate utilization.
 - [ ] CPU topology, frequency, temperature, power and idle states.
-- [x] RAM capacity and available/used memory.
-- [ ] Swap and PSI.
+- [x] RAM capacity, available/free memory, buffers and cache.
+- [x] Swap, memory PSI and HugePages when exported by the kernel.
 - [ ] NVIDIA telemetry through NVML, with controlled fallback.
 - [ ] AMD and Intel GPU telemetry through supported DRM interfaces.
 - [ ] Storage and NVMe telemetry.

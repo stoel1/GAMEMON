@@ -7,5 +7,7 @@
 - Added a typed sensor reading model with explicit availability status.
 - Added two-second CPU utilization and RAM refresh, with unavailable readings kept explicit.
 - Added unit coverage for CPU counter and memory parsers.
+- Expanded memory telemetry to free memory, buffers/cache, swap, PSI and HugePages.
+- Kept missing, malformed and overflowing memory readings unavailable and added parser tests.
 
 The Rust migration is not a stable release. The archived Bash implementation remains available as a comparison baseline.

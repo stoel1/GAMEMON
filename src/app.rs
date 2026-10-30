@@ -76,13 +76,50 @@ fn refresh(
     ));
 
     let memory = memory::sample();
-    let memory_text = match (memory.used_bytes(), memory.total_bytes) {
-        (Some(used), Some(total)) => format!(
-            "RAM gebruikt: {:.1} GiB / {:.1} GiB",
-            used as f64 / 1_073_741_824.0,
-            total as f64 / 1_073_741_824.0
+    let memory_text = format!(
+        "Geheugen\nRAM gebruikt: {} / {}\nBeschikbaar: {} · Vrij: {}\nBuffers: {} · Cache: {}\nSwap gebruikt: {} / {}\nHugePages: {}\nMemory PSI: {}",
+        format_optional_bytes(memory.used_bytes()),
+        format_optional_bytes(memory.total_bytes),
+        format_optional_bytes(memory.available_bytes),
+        format_optional_bytes(memory.free_bytes),
+        format_optional_bytes(memory.buffers_bytes),
+        format_optional_bytes(memory.cached_bytes),
+        format_optional_bytes(memory.swap_used_bytes()),
+        format_optional_bytes(memory.swap_total_bytes),
+        format_hugepages(memory),
+        format_memory_pressure(memory.pressure),
+    );
+    memory_label.set_text(&memory_text);
+}
+
+fn format_optional_bytes(value: Option<u64>) -> String {
+    value
+        .map(|bytes| format!("{:.1} GiB", bytes as f64 / 1_073_741_824.0))
+        .unwrap_or_else(|| "Niet beschikbaar".to_owned())
+}
+
+fn format_hugepages(memory: memory::MemorySnapshot) -> String {
+    match (
+        memory.huge_pages_free,
+        memory.huge_pages_total,
+        memory.huge_page_size_bytes,
+    ) {
+        (Some(free), Some(total), Some(size)) => format!(
+            "{free} vrij / {total} totaal ({:.0} MiB per pagina)",
+            size as f64 / 1_048_576.0
         ),
-        _ => "RAM-gebruik: Niet beschikbaar".to_owned(),
-    };
-    memory_label.set_text(&format!("Geheugen\n{memory_text}"));
+        _ => "Niet beschikbaar".to_owned(),
+    }
+}
+
+fn format_memory_pressure(pressure: Option<memory::MemoryPressure>) -> String {
+    pressure
+        .map(|pressure| {
+            let full = pressure
+                .full
+                .map(|metrics| format!("{:.2}%", metrics.avg10))
+                .unwrap_or_else(|| "Niet beschikbaar".to_owned());
+            format!("some {:.2}% · full {full}", pressure.some.avg10)
+        })
+        .unwrap_or_else(|| "Niet beschikbaar".to_owned())
 }
