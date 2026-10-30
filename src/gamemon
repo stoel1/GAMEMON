@@ -436,10 +436,15 @@ read_gpu() {
         if [[ -n "$data" ]]; then
             while IFS= read -r line; do
                 IFS=',' read -r name pstate util memutil encoder decoder temp fan power limit core memclock video pcie_gen pcie_width used total <<< "$line"
-                local field
-                for field in name pstate util memutil encoder decoder temp fan power limit core memclock video pcie_gen pcie_width used total; do
-                    printf -v "$field" '%s' "${!field// /}"
-                done
+                name="${name// /}"; pstate="${pstate// /}"
+                util="${util// /}"; memutil="${memutil// /}"
+                encoder="${encoder// /}"; decoder="${decoder// /}"
+                temp="${temp// /}"; fan="${fan// /}"
+                power="${power// /}"; limit="${limit// /}"
+                core="${core// /}"; memclock="${memclock// /}"
+                video="${video// /}"; pcie_gen="${pcie_gen// /}"
+                pcie_width="${pcie_width// /}"; used="${used// /}"
+                total="${total// /}"
                 GPU_LINES+=("${name}: ${util}% GPU | ${memutil}% memory | ${temp} C | Fan ${fan}% | ${power}/${limit} W | P-state ${pstate}")
                 GPU_LINES+=("Clocks: Core ${core} MHz | Memory ${memclock} MHz | Video ${video} MHz | PCIe Gen ${pcie_gen} x${pcie_width}")
                 GPU_LINES+=("Engines: Encoder ${encoder}% | Decoder ${decoder}% | VRAM ${used}/${total} MiB")
