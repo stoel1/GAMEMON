@@ -3,33 +3,41 @@
 ## Phase 1 — correctness and sensor reliability
 
 - [ ] Validate sensor mappings against documented hwmon labels.
-- [ ] Make CPU topology discovery dynamic instead of relying on fixed i9-13900K core IDs.
+- [x] Make online CPU topology discovery dynamic instead of relying on fixed i9-13900K core IDs.
 - [ ] Handle missing, unreadable and malformed sensor values consistently.
-- [ ] Avoid assuming every system exposes 32 logical CPUs or 48 core temperature labels.
+- [x] Avoid assuming every system exposes 32 logical CPUs or 48 core temperature labels.
 - [ ] Add shell syntax checks and a lightweight test harness.
 
 ## Phase 2 — CPU telemetry
 
-- [ ] Integrate `turbostat` where supported.
+- [ ] Decide whether optional `turbostat` metrics add value beyond unprivileged sysfs telemetry.
 - [ ] Add package/core power and effective frequency reporting.
-- [ ] Add C-state residency reporting.
+- [x] Add C-state residency reporting through cpuidle sysfs where available.
 - [ ] Keep a graceful fallback when turbostat or required permissions are unavailable.
 
-## Phase 3 — terminal interface
+## Phase 3 — broader hardware support
+
+- [x] Add multi-adapter NVIDIA detection through `nvidia-smi`.
+- [x] Add best-effort AMD/Intel GPU detection through DRM sysfs.
+- [ ] Validate CPU temperature labels on Intel, AMD and ARM systems.
+- [ ] Validate AMD/Intel GPU telemetry across multiple kernel drivers.
+- [ ] Add broader hwmon discovery for motherboard and platform sensors.
+
+## Phase 4 — terminal interface
 
 - [ ] Improve layout, alignment and terminal-size handling.
 - [ ] Add configurable refresh interval and display options.
 - [ ] Add clear unavailable/unsupported sensor states.
 - [ ] Consider color and compact modes.
 
-## Phase 4 — RHEL RPM
+## Phase 5 — RHEL RPM
 
 - [ ] Validate RPM build on RHEL 10.
 - [ ] Add package-owned configuration and documentation.
 - [ ] Verify install, upgrade and erase behavior.
 - [ ] Add package checks and clean build instructions.
 
-## Phase 5 — release quality
+## Phase 6 — release quality
 
 - [ ] Add automated static checks.
 - [ ] Document supported hardware and tested configurations.
