@@ -158,9 +158,6 @@ impl MetricCard {
             context.move_to(right - label_width, height - 4.0);
             let _ = context.show_text(label);
 
-            context.set_source_rgba(0.35, 0.72, 0.95, 1.0);
-            context.move_to(right - 66.0, top - 1.0);
-            let _ = context.show_text(&format!("{latest:.1}%"));
         });
 
         let details = gtk::Box::new(Orientation::Vertical, 5);
