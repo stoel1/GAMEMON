@@ -81,8 +81,8 @@ fn parse_process_stat(contents: &str) -> Option<ParsedProcess> {
     let fields = contents[close + 1..].split_whitespace().collect::<Vec<_>>();
     if fields.len() < 22 { return None; }
     let state = fields[0].chars().next()?;
-    let user = fields[10].parse::<u64>().ok()?;
-    let system = fields[11].parse::<u64>().ok()?;
+    let user = fields[11].parse::<u64>().ok()?;
+    let system = fields[12].parse::<u64>().ok()?;
     let rss_pages = fields[21].parse::<i64>().ok()?.max(0) as u64;
     Some(ParsedProcess { name, state, cpu_ticks: user.checked_add(system)?, rss_pages })
 }
