@@ -478,7 +478,7 @@ fn render_snapshot(
     sensors_card: &MetricCard,
     storage_card: &MetricCard,
     process_card: &MetricCard,
-    detail_labels: &BTreeMap<String, gtk::Label>,
+    detail_labels: &BTreeMap<String, gtk::Box>,
 ) {
     let cpu = &snapshot.cpu;
     let cpu_usage = cpu_utilization_value(cpu.utilization);
