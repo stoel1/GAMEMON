@@ -58,8 +58,9 @@ impl MetricCard {
 
         let history = Rc::new(RefCell::new(VecDeque::<f64>::with_capacity(60)));
         let chart = gtk::DrawingArea::new();
-        chart.set_content_height(88);
+        chart.set_content_height(120);
         chart.set_hexpand(true);
+        chart.set_vexpand(true);
         chart.add_css_class("gamemon-sparkline");
         let displayed_usage = Rc::new(Cell::new(0.0));
         let target_usage = Rc::new(Cell::new(0.0));
@@ -181,14 +182,22 @@ impl MetricCard {
         frame.set_size_request(-1, 330);
 
         // Sleepbare onderrand om de kaart individueel hoger of lager te maken.
-        let resize_grip = gtk::Label::new(Some("⠿  Sleep om kaart te vergroten/verkleinen"));
+        let resize_grip = gtk::Button::with_label("⠿  Sleep om kaart te vergroten/verkleinen");
         resize_grip.set_halign(Align::End);
+        resize_grip.set_valign(Align::End);
+        resize_grip.set_has_frame(false);
+        resize_grip.add_css_class("flat");
         resize_grip.add_css_class("dim-label");
         resize_grip.add_css_class("caption");
-        resize_grip.set_margin_top(4);
+        resize_grip.set_margin_top(6);
         resize_grip.set_cursor_from_name(Some("ns-resize"));
+        resize_grip.set_tooltip_text(Some("Sleep omhoog of omlaag om de kaart hoger of lager te maken"));
         container.append(&resize_grip);
+
+        // Attach the drag controller to a real button hit target. A passive
+        // label can lose pointer events to surrounding widgets in GTK layouts.
         let drag = gtk::GestureDrag::new();
+        drag.set_propagation_phase(gtk::PropagationPhase::Capture);
         let start_height = Rc::new(Cell::new(330i32));
         let start_for_begin = Rc::clone(&start_height);
         let weak_frame = frame.downgrade();
@@ -202,8 +211,9 @@ impl MetricCard {
         let weak_frame = frame.downgrade();
         drag.connect_drag_update(move |_, _, offset_y| {
             if let Some(frame) = weak_frame.upgrade() {
-                let height = (start_for_update.get() + offset_y.round() as i32).clamp(260, 760);
+                let height = (start_for_update.get() + offset_y.round() as i32).clamp(260, 900);
                 frame.set_size_request(-1, height);
+                frame.queue_resize();
             }
         });
         resize_grip.add_controller(drag);
