@@ -138,6 +138,8 @@ pub fn activate(application: &Application) {
     let (gpu_frame, gpu_card) = MetricCard::new("GRAPHICS", "Grafische processor");
     let (memory_frame, memory_card) = MetricCard::new("GEHEUGEN", "RAM-gebruik");
     let (network_frame, network_card) = MetricCard::new("NETWERK", "Actuele netwerkdoorvoer");
+    let (system_frame, system_card) = MetricCard::new("SYSTEEM", "Uptime en load average");
+    let (sensors_frame, sensors_card) = MetricCard::new("SENSOREN", "Temperaturen en ventilatoren");
 
     let content = gtk::Box::new(Orientation::Vertical, 18);
     content.set_margin_top(24);
@@ -165,6 +167,8 @@ pub fn activate(application: &Application) {
     grid.attach(&gpu_frame, 1, 0, 1, 1);
     grid.attach(&memory_frame, 0, 1, 1, 1);
     grid.attach(&network_frame, 1, 1, 1, 1);
+    grid.attach(&system_frame, 0, 2, 1, 1);
+    grid.attach(&sensors_frame, 1, 2, 1, 1);
     content.append(&grid);
 
     let footer = gtk::Label::new(Some("Gegevens worden lokaal gelezen via Linux procfs, sysfs en ondersteunde driverinterfaces."));
@@ -198,13 +202,17 @@ pub fn activate(application: &Application) {
     let gpu_card = downgrade_card(gpu_card);
     let memory_card = downgrade_card(memory_card);
     let network_card = downgrade_card(network_card);
+    let system_card = downgrade_card(system_card);
+    let sensors_card = downgrade_card(sensors_card);
 
     gtk::glib::timeout_add_local(UI_POLL_INTERVAL, move || {
-        let (Some(cpu_card), Some(gpu_card), Some(memory_card), Some(network_card)) = (
+        let (Some(cpu_card), Some(gpu_card), Some(memory_card), Some(network_card), Some(system_card), Some(sensors_card)) = (
             upgrade_card(&cpu_card),
             upgrade_card(&gpu_card),
             upgrade_card(&memory_card),
             upgrade_card(&network_card),
+            upgrade_card(&system_card),
+            upgrade_card(&sensors_card),
         ) else {
             return gtk::glib::ControlFlow::Break;
         };
@@ -219,12 +227,14 @@ pub fn activate(application: &Application) {
                     gpu_card.primary.set_text("Niet beschikbaar");
                     memory_card.primary.set_text("Niet beschikbaar");
                     network_card.primary.set_text("Niet beschikbaar");
+                    system_card.primary.set_text("Niet beschikbaar");
+                    sensors_card.primary.set_text("Niet beschikbaar");
                     return gtk::glib::ControlFlow::Break;
                 }
             }
         }
         if let Some(snapshot) = latest {
-            render_snapshot(&snapshot, &cpu_card, &gpu_card, &memory_card, &network_card);
+            render_snapshot(&snapshot, &cpu_card, &gpu_card, &memory_card, &network_card, &system_card, &sensors_card);
         }
         gtk::glib::ControlFlow::Continue
     });
@@ -270,6 +280,8 @@ fn render_snapshot(
     gpu_card: &MetricCard,
     memory_card: &MetricCard,
     network_card: &MetricCard,
+    system_card: &MetricCard,
+    sensors_card: &MetricCard,
 ) {
     let cpu = &snapshot.cpu;
     let cpu_usage = cpu_utilization_value(cpu.utilization);
@@ -351,6 +363,33 @@ fn render_snapshot(
         swap
     ));
 
+    let system = &snapshot.system;
+    let uptime = system.uptime_seconds.map(format_uptime).unwrap_or_else(|| "Niet beschikbaar".to_owned());
+    let load = system.load_average.map(|values| format!("{:.2} · {:.2} · {:.2}", values[0], values[1], values[2])).unwrap_or_else(|| "Niet beschikbaar".to_owned());
+    system_card.primary.set_text(&uptime);
+    system_card.secondary.set_text("Systeem actief");
+    system_card.details.set_text(&format!("Load average (1 / 5 / 15 min): {load}"));
+    system_card.set_usage(None);
+
+    if system.temperatures.is_empty() && system.fans.is_empty() {
+        sensors_card.primary.set_text("Geen sensoren");
+        sensors_card.secondary.set_text("Geen hwmon-metingen beschikbaar");
+        sensors_card.details.set_text("Controleer of de kernel temperatuur- en fanwaarden via /sys/class/hwmon exporteert.");
+    } else {
+        let hottest = system.temperatures.iter().max_by(|left, right| left.celsius.total_cmp(&right.celsius));
+        if let Some(reading) = hottest {
+            sensors_card.primary.set_text(&format!("{:.1} °C", reading.celsius));
+            sensors_card.secondary.set_text(&format!("Hoogste temperatuur · {}", reading.label));
+        } else {
+            sensors_card.primary.set_text(&format!("{} fans", system.fans.len()));
+            sensors_card.secondary.set_text("Ventilatorsnelheden");
+        }
+        let temperatures = system.temperatures.iter().take(8).map(|reading| format!("{}: {:.1} °C", reading.label, reading.celsius)).collect::<Vec<_>>();
+        let fans = system.fans.iter().take(6).map(|reading| format!("{}: {} RPM", reading.label, reading.rpm)).collect::<Vec<_>>();
+        sensors_card.details.set_text(&temperatures.into_iter().chain(fans).collect::<Vec<_>>().join("\n"));
+    }
+    sensors_card.set_usage(None);
+
     match &snapshot.network {
         Some(network) if !network.interfaces.is_empty() => {
             let active = network.interfaces.iter().filter(|interface| interface.carrier == Some(true) || interface.operational_state.as_deref() == Some("up")).collect::<Vec<_>>();
@@ -400,6 +439,17 @@ fn format_cpu_utilization(value: cpu::CpuUtilization) -> String {
         cpu::CpuUtilization::Available(value) => format!("{value:.1}%"),
         cpu::CpuUtilization::WarmingUp => "Meten…".to_owned(),
         cpu::CpuUtilization::Unavailable => "N/B".to_owned(),
+    }
+}
+
+fn format_uptime(seconds: u64) -> String {
+    let days = seconds / 86_400;
+    let hours = (seconds % 86_400) / 3_600;
+    let minutes = (seconds % 3_600) / 60;
+    if days > 0 {
+        format!("{days}d {hours:02}u {minutes:02}m")
+    } else {
+        format!("{hours}u {minutes:02}m")
     }
 }
 
