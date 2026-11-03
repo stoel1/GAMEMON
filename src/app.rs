@@ -53,7 +53,7 @@ impl MetricCard {
 
         let history = Rc::new(RefCell::new(VecDeque::<f64>::with_capacity(60)));
         let chart = gtk::DrawingArea::new();
-        chart.set_content_height(52);
+        chart.set_content_height(88);
         chart.set_hexpand(true);
         chart.add_css_class("gamemon-sparkline");
         let chart_history = Rc::clone(&history);
@@ -62,23 +62,92 @@ impl MetricCard {
             if values.len() < 2 || width <= 1 || height <= 1 {
                 return;
             }
+
             let width = f64::from(width);
             let height = f64::from(height);
+            let left = 38.0;
+            let right = width - 8.0;
+            let top = 8.0;
+            let bottom = height - 20.0;
+            let plot_width = right - left;
+            let plot_height = bottom - top;
+            if plot_width <= 1.0 || plot_height <= 1.0 {
+                return;
+            }
+
             let points = values.iter().copied().collect::<Vec<_>>();
-            context.set_line_width(1.8);
+            let minimum = points.iter().copied().fold(f64::INFINITY, f64::min);
+            let maximum = points.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let span = (maximum - minimum).max(1.0);
+            let padding = (span * 0.18).max(0.5);
+            let scale_min = (minimum - padding).max(0.0);
+            let scale_max = (maximum + padding).min(100.0).max(scale_min + 1.0);
+            let scale_span = scale_max - scale_min;
+
+            context.select_font_face("Sans", gtk::cairo::FontSlant::Normal, gtk::cairo::FontWeight::Normal);
+            context.set_font_size(10.0);
+            context.set_line_width(1.0);
+            context.set_source_rgba(0.65, 0.68, 0.72, 0.22);
+
+            for tick in 0..=2 {
+                let fraction = tick as f64 / 2.0;
+                let y = bottom - fraction * plot_height;
+                context.move_to(left, y);
+                context.line_to(right, y);
+                let _ = context.stroke();
+
+                let value = scale_min + fraction * scale_span;
+                context.set_source_rgba(0.72, 0.74, 0.77, 0.9);
+                context.move_to(0.0, y + 3.5);
+                let _ = context.show_text(&format!("{value:.1}%"));
+                context.set_source_rgba(0.65, 0.68, 0.72, 0.22);
+            }
+
+            let coordinates = points.iter().enumerate().map(|(index, value)| {
+                let x = left + index as f64 / (points.len() - 1) as f64 * plot_width;
+                let normalized = ((*value).clamp(scale_min, scale_max) - scale_min) / scale_span;
+                let y = bottom - normalized * plot_height;
+                (x, y)
+            }).collect::<Vec<_>>();
+
+            context.move_to(coordinates[0].0, bottom);
+            for (x, y) in &coordinates {
+                context.line_to(*x, *y);
+            }
+            context.line_to(coordinates.last().unwrap().0, bottom);
+            context.close_path();
+            context.set_source_rgba(0.25, 0.68, 0.91, 0.12);
+            let _ = context.fill();
+
+            context.set_line_width(2.0);
             context.set_line_cap(gtk::cairo::LineCap::Round);
             context.set_line_join(gtk::cairo::LineJoin::Round);
-            context.set_source_rgba(0.35, 0.72, 0.95, 0.95);
-            for (index, value) in points.iter().enumerate() {
-                let x = index as f64 / (points.len() - 1) as f64 * width;
-                let y = height - (value.clamp(0.0, 100.0) / 100.0 * (height - 6.0)) - 3.0;
+            context.set_source_rgba(0.35, 0.72, 0.95, 1.0);
+            for (index, (x, y)) in coordinates.iter().enumerate() {
                 if index == 0 {
-                    context.move_to(x, y);
+                    context.move_to(*x, *y);
                 } else {
-                    context.line_to(x, y);
+                    context.line_to(*x, *y);
                 }
             }
             let _ = context.stroke();
+
+            let latest = points.last().copied().unwrap_or_default();
+            context.set_source_rgba(0.35, 0.72, 0.95, 1.0);
+            context.arc(coordinates.last().unwrap().0, coordinates.last().unwrap().1, 3.0, 0.0, std::f64::consts::TAU);
+            let _ = context.fill();
+
+            context.set_source_rgba(0.72, 0.74, 0.77, 0.9);
+            context.move_to(left, height - 4.0);
+            let _ = context.show_text("60 metingen geleden");
+            let label = "nu";
+            let label_width = context.text_extents(label).map(|extents| extents.width()).unwrap_or(12.0);
+            context.move_to(right - label_width, height - 4.0);
+            let _ = context.show_text(label);
+
+            context.set_source_rgba(0.35, 0.72, 0.95, 1.0);
+            context.move_to(right - 66.0, top - 1.0);
+            let _ = context.show_text(&format!("{latest:.1}%"));
         });
 
         let details = gtk::Label::new(Some("Gegevens worden verzameld…"));
