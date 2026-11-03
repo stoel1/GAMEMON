@@ -168,7 +168,8 @@ impl MetricCard {
         frame.add_css_class("card");
         frame.set_child(Some(&container));
         frame.set_hexpand(true);
-        frame.set_vexpand(true);
+        frame.set_vexpand(false);
+        frame.set_valign(Align::Start);
 
         (
             frame,
@@ -213,13 +214,13 @@ pub fn activate(application: &Application) {
     let (process_frame, process_card) = MetricCard::new("PROCESSEN", "Actieve processen · CPU en geheugen");
 
     let content = gtk::Box::new(Orientation::Vertical, 18);
-    content.set_margin_top(24);
-    content.set_margin_bottom(24);
-    content.set_margin_start(24);
-    content.set_margin_end(24);
+    content.set_margin_top(20);
+    content.set_margin_bottom(20);
+    content.set_margin_start(20);
+    content.set_margin_end(20);
 
     let intro = gtk::Box::new(Orientation::Vertical, 4);
-    let title = gtk::Label::new(Some("GAMEMON"));
+    let title = gtk::Label::new(Some("Overzicht"));
     title.set_halign(Align::Start);
     title.add_css_class("title-1");
     let subtitle = gtk::Label::new(Some("Hardwareoverzicht · live systeemtelemetrie"));
@@ -229,20 +230,23 @@ pub fn activate(application: &Application) {
     intro.append(&subtitle);
     content.append(&intro);
 
-    let grid = gtk::Grid::new();
-    grid.set_column_spacing(16);
-    grid.set_row_spacing(16);
-    grid.set_column_homogeneous(true);
-    grid.set_hexpand(true);
-    grid.attach(&cpu_frame, 0, 0, 1, 1);
-    grid.attach(&gpu_frame, 1, 0, 1, 1);
-    grid.attach(&memory_frame, 0, 1, 1, 1);
-    grid.attach(&network_frame, 1, 1, 1, 1);
-    grid.attach(&system_frame, 0, 2, 1, 1);
-    grid.attach(&sensors_frame, 1, 2, 1, 1);
-    grid.attach(&storage_frame, 0, 3, 1, 1);
-    grid.attach(&process_frame, 1, 3, 1, 1);
-    content.append(&grid);
+    let dashboard = gtk::FlowBox::new();
+    dashboard.set_selection_mode(gtk::SelectionMode::None);
+    dashboard.set_homogeneous(true);
+    dashboard.set_min_children_per_line(1);
+    dashboard.set_max_children_per_line(2);
+    dashboard.set_row_spacing(16);
+    dashboard.set_column_spacing(16);
+    dashboard.set_hexpand(true);
+    dashboard.append(&cpu_frame);
+    dashboard.append(&gpu_frame);
+    dashboard.append(&memory_frame);
+    dashboard.append(&network_frame);
+    dashboard.append(&system_frame);
+    dashboard.append(&sensors_frame);
+    dashboard.append(&storage_frame);
+    dashboard.append(&process_frame);
+    content.append(&dashboard);
 
     let footer = gtk::Label::new(Some("Gegevens worden lokaal gelezen via Linux procfs, sysfs en ondersteunde driverinterfaces."));
     footer.set_halign(Align::Start);
@@ -381,24 +385,11 @@ fn render_snapshot(
     let package_power = power_by_domain.iter()
         .map(|(name, watts)| format!("{name}: {watts:.1} W"))
         .collect::<Vec<_>>();
-    let core_lines = cpu.logical_cpus.iter().take(32).map(|core| {
-        let (percent, usage) = match core.utilization {
-            cpu::CpuUtilization::Available(value) => {
-                let filled = ((value.clamp(0.0, 100.0) / 100.0) * 10.0).round() as usize;
-                (format!("{value:4.1}%"), format!("{}{}", "▰".repeat(filled), "▱".repeat(10 - filled)))
-            }
-            cpu::CpuUtilization::WarmingUp => ("meten".to_owned(), "··········".to_owned()),
-            cpu::CpuUtilization::Unavailable => ("N/B".to_owned(), "──────────".to_owned()),
-        };
-        format!("CPU{:02}  {:>5}  {}  {}", core.id, percent, usage,
-            core.current_frequency_hz.map(|hz| format!("{:.0} MHz", hz as f64 / 1_000_000.0)).unwrap_or_else(|| "klok N/B".to_owned()))
-    }).collect::<Vec<_>>();
     cpu_card.details.set_text(&format!(
-        "{} logische CPU's · Gemiddelde klok: {}\nPakketvermogen: {}\n\nPer-logische CPU\n{}",
+        "{} logische CPU's · Gemiddelde klok: {}\nPakketvermogen: {}",
         cpu.logical_cpus.len(),
         average_frequency,
-        if package_power.is_empty() { "Niet beschikbaar".to_owned() } else { package_power.join(" · ") },
-        if core_lines.is_empty() { "Niet beschikbaar".to_owned() } else { core_lines.join("\n") }
+        if package_power.is_empty() { "Niet beschikbaar".to_owned() } else { package_power.join(" · ") }
     ));
 
     match &snapshot.gpu {
@@ -494,7 +485,7 @@ fn render_snapshot(
         storage_card.primary.set_text(&format!("{} bestandssystemen", filesystems.len()));
         storage_card.secondary.set_text(&format!("{} gebruikt van {}", format_bytes(total_used), format_bytes(total_capacity)));
     }
-    let mounts = filesystems.iter().take(8).map(|fs| {
+    let mounts = filesystems.iter().take(4).map(|fs| {
         let used = fs.used_bytes.zip(fs.total_bytes.filter(|total| *total > 0))
             .map(|(used,total)| format!("{:.0}%", used as f64 / total as f64 * 100.0))
             .unwrap_or_else(|| "N/B".to_owned());
@@ -504,7 +495,7 @@ fn render_snapshot(
     }).collect::<Vec<_>>();
     let io = snapshot.storage.devices.iter().filter(|device|
         device.read_bytes_per_second.unwrap_or(0.0) > 0.0 || device.write_bytes_per_second.unwrap_or(0.0) > 0.0
-    ).take(6).map(|device| format!("{} · lezen {} · schrijven {}", device.name,
+    ).take(3).map(|device| format!("{} · lezen {} · schrijven {}", device.name,
         device.read_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()),
         device.write_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned())
     )).collect::<Vec<_>>();
@@ -514,7 +505,7 @@ fn render_snapshot(
     let processes = &snapshot.processes.processes;
     process_card.primary.set_text(&format!("{} processen", processes.len()));
     process_card.secondary.set_text("Gerangschikt op CPU-gebruik");
-    let process_lines = processes.iter().take(12).map(|process| format!(
+    let process_lines = processes.iter().take(6).map(|process| format!(
         "{:>6}  {:>5}  {:>7}  {}",
         process.pid,
         process.cpu_percent.map(|value| format!("{value:.1}%")).unwrap_or_else(|| "N/B".to_owned()),
