@@ -22,7 +22,7 @@ The Rust application is the primary development target. The former Bash monitor 
 - [ ] AMD and Intel GPU telemetry through supported DRM interfaces.
 - [ ] Storage and NVMe telemetry.
 - [x] Network interface status/counters, throughput rates, errors and drops.
-- [ ] Motherboard temperatures and fan telemetry through hwmon.
+- [x] Dynamic hwmon temperature and fan RPM discovery when exported by the kernel.
 - [ ] PCIe, USB, audio and display inventory.
 
 ## Application
@@ -33,6 +33,8 @@ The Rust application is the primary development target. The former Bash monitor 
 - [x] Eerste metricgerichte dashboard met CPU-, GPU-, geheugen- en netwerkkaarten.
 - [x] Primaire waarden, ondersteunende details en gebruiksindicatoren in de overzichtskaarten.
 - [x] Rolling 60-sample utilization sparklines for CPU, GPU and memory.
+- [x] System uptime and load average overview panel.
+- [x] Temperature and fan overview panel backed by hwmon.
 - [ ] Dashboard verder verfijnen met statusindicatoren, tijdschaal en lege-/foutstatussen.
 - [ ] Afzonderlijke apparaatweergaven en navigatie.
 - [ ] Hardware discovery and hotplug handling.
