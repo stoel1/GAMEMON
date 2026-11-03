@@ -21,3 +21,10 @@
 - Added dynamically discovered Linux powercap/RAPL CPU package power sampling from energy counter deltas.
 
 The Rust migration is not a stable release. The archived Bash implementation remains available as a comparison baseline.
+
+
+## Unreleased – Rust dashboard
+
+- Replaced the initial vertical telemetry list with a two-column, card-based overview for CPU, GPU, memory and network data.
+- Kept telemetry collection in the background sampler and GTK updates on the main thread.
+- This is an initial dashboard layout; dedicated device pages, charts and responsive navigation remain planned.
