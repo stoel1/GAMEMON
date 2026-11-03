@@ -778,7 +778,6 @@ fn render_snapshot(
         snapshot.system.uptime_seconds.map(|v| format!("{v} seconden")).unwrap_or_else(|| "N/B".to_owned()),
         snapshot.system.load_average.map(|v| format!("{:.2} · {:.2} · {:.2}", v[0],v[1],v[2])).unwrap_or_else(|| "N/B".to_owned())
     ));
-    }
 }
 
 fn set_detail(labels: &BTreeMap<String, gtk::Label>, key: &str, value: &str) {
