@@ -22,7 +22,7 @@ struct MetricCard {
     displayed_usage: Rc<Cell<f64>>,
     target_usage: Rc<Cell<f64>>,
     chart: gtk::DrawingArea,
-    details: gtk::Label,
+    details: gtk::Box,
 }
 
 impl MetricCard {
@@ -159,15 +159,10 @@ impl MetricCard {
             let _ = context.show_text(&format!("{latest:.1}%"));
         });
 
-        let details = gtk::Label::new(Some("Gegevens worden verzameld…"));
-        details.set_halign(Align::Start);
-        details.set_valign(Align::Fill);
+        let details = gtk::Box::new(Orientation::Vertical, 5);
+        details.set_hexpand(true);
         details.set_vexpand(true);
-        details.set_wrap(true);
-        details.set_lines(3);
-        details.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        details.set_selectable(true);
-        details.add_css_class("dim-label");
+        set_metric_details(&details, "Gegevens worden verzameld…");
 
         container.append(&heading);
         container.append(&primary);
@@ -575,7 +570,7 @@ fn render_snapshot(
     let package_power = power_by_domain.iter()
         .map(|(name, watts)| format!("{name}: {watts:.1} W"))
         .collect::<Vec<_>>();
-    cpu_card.details.set_text(&format!(
+    set_metric_details(&cpu_card.details, &format!(
         "{} logische CPU's · Gemiddelde klok: {}\nPakketvermogen: {}",
         cpu.logical_cpus.len(),
         average_frequency,
@@ -598,18 +593,18 @@ fn render_snapshot(
             let temperature = device.temperature_celsius.map(|value| format!("{value} °C")).unwrap_or_else(|| "N/B".to_owned());
             let power = device.power_milliwatts.map(|value| format!("{:.1} W", value as f64 / 1000.0)).unwrap_or_else(|| "N/B".to_owned());
             let clocks = device.graphics_clock_mhz.map(|value| format!("{value} MHz")).unwrap_or_else(|| "N/B".to_owned());
-            gpu_card.details.set_text(&format!("Temperatuur: {temperature} · Vermogen: {power}\n{vram} · Core clock: {clocks}\n{} GPU(s) gedetecteerd", gpu.devices.len()));
+            set_metric_details(&gpu_card.details, &format!("Temperatuur: {temperature} · Vermogen: {power}\n{vram} · Core clock: {clocks}\n{} GPU(s) gedetecteerd", gpu.devices.len()));
         }
         Some(_) => {
             gpu_card.primary.set_text("Geen GPU");
             gpu_card.secondary.set_text("Geen grafische apparaten gevonden");
-            gpu_card.details.set_text("Controleer of de kernel DRM-apparaten beschikbaar stelt.");
+            set_metric_details(&gpu_card.details, "Controleer of de kernel DRM-apparaten beschikbaar stelt.");
             gpu_card.set_usage(None);
         }
         None => {
             gpu_card.primary.set_text("N/B");
             gpu_card.secondary.set_text("GPU-telemetrie niet beschikbaar");
-            gpu_card.details.set_text("Er kon geen GPU-informatie worden verzameld.");
+            set_metric_details(&gpu_card.details, "Er kon geen GPU-informatie worden verzameld.");
             gpu_card.set_usage(None);
         }
     }
@@ -633,7 +628,7 @@ fn render_snapshot(
         (Some(used), Some(total)) => format!("Swap: {} / {}", format_bytes(used), format_bytes(total)),
         _ => "Swap: N/B".to_owned(),
     };
-    memory_card.details.set_text(&format!(
+    set_metric_details(&memory_card.details, &format!(
         "Beschikbaar: {} · Vrij: {}\n{}",
         memory.available_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
         memory.free_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
@@ -646,7 +641,7 @@ fn render_snapshot(
     let load = system.load_average.map(|values| format!("{:.2} · {:.2} · {:.2}", values[0], values[1], values[2])).unwrap_or_else(|| "Niet beschikbaar".to_owned());
     system_card.primary.set_text(&uptime);
     system_card.secondary.set_text("Systeem actief");
-    system_card.details.set_text(&format!("Load average (1 / 5 / 15 min): {load}"));
+    set_metric_details(&system_card.details, &format!("Load average (1 / 5 / 15 min): {load}"));
     system_card.set_usage(None);
 
     let hottest_temperature = system.temperatures.iter().map(|v| v.celsius).reduce(f64::max);
@@ -654,7 +649,7 @@ fn render_snapshot(
     if system.temperatures.is_empty() && system.fans.is_empty() {
         sensors_card.primary.set_text("Geen sensoren");
         sensors_card.secondary.set_text("Geen hwmon-metingen beschikbaar");
-        sensors_card.details.set_text("Controleer of de kernel temperatuur- en fanwaarden via /sys/class/hwmon exporteert.");
+        set_metric_details(&sensors_card.details, "Controleer of de kernel temperatuur- en fanwaarden via /sys/class/hwmon exporteert.");
     } else {
         let hottest = system.temperatures.iter().max_by(|left, right| left.celsius.total_cmp(&right.celsius));
         if let Some(reading) = hottest {
@@ -666,7 +661,7 @@ fn render_snapshot(
         }
         let temperatures = system.temperatures.iter().take(3).map(|reading| format!("{}: {:.1} °C", reading.label, reading.celsius)).collect::<Vec<_>>();
         let fans = system.fans.iter().take(3).map(|reading| format!("{}: {} RPM", reading.label, reading.rpm)).collect::<Vec<_>>();
-        sensors_card.details.set_text(&temperatures.into_iter().chain(fans).collect::<Vec<_>>().join("\n"));
+        set_metric_details(&sensors_card.details, &temperatures.into_iter().chain(fans).collect::<Vec<_>>().join("\n"));
     }
     sensors_card.set_usage(None);
 
@@ -702,7 +697,7 @@ fn render_snapshot(
         device.read_bytes_per_second.map(format_rate).unwrap_or_else(|| "0 B/s".to_owned()),
         device.write_bytes_per_second.map(format_rate).unwrap_or_else(|| "0 B/s".to_owned())
     )).collect::<Vec<_>>();
-    storage_card.details.set_text(&mounts.into_iter().chain(io).collect::<Vec<_>>().join("\n"));
+    set_metric_details(&storage_card.details, &mounts.into_iter().chain(io).collect::<Vec<_>>().join("\n"));
     storage_card.set_usage(None);
 
     let processes = &snapshot.processes.processes;
@@ -717,7 +712,7 @@ fn render_snapshot(
         process.memory_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
         process.name
     )).collect::<Vec<_>>();
-    process_card.details.set_text(&if process_lines.is_empty() {
+    set_metric_details(&process_card.details, &if process_lines.is_empty() {
         "Geen processen beschikbaar".to_owned()
     } else {
         format!(" PID    CPU    RAM    Proces\n{}", process_lines.join("\n"))
@@ -734,7 +729,7 @@ fn render_snapshot(
             let tx = active.iter().filter_map(|interface| interface.tx_bytes_per_second).sum::<f64>();
             network_card.primary.set_text(&format!("↓ {}  ↑ {}", format_rate(rx), format_rate(tx)));
             network_card.secondary.set_text(&format!("{} interfaces · {} actief", network.interfaces.len(), active.len()));
-            network_card.details.set_text(&active.iter().take(3).map(|interface| {
+            set_metric_details(&network_card.details, &active.iter().take(3).map(|interface| {
                 format!("{} · ↓ {} · ↑ {}", interface.name, format_rate(interface.rx_bytes_per_second.unwrap_or(0.0)), format_rate(interface.tx_bytes_per_second.unwrap_or(0.0)))
             }).collect::<Vec<_>>().join("\n"));
             network_card.set_usage(None);
@@ -742,13 +737,13 @@ fn render_snapshot(
         Some(_) => {
             network_card.primary.set_text("Geen interfaces");
             network_card.secondary.set_text("Geen netwerkinterfaces gevonden");
-            network_card.details.set_text("Netwerkdetails zijn niet beschikbaar.");
+            set_metric_details(&network_card.details, "Netwerkdetails zijn niet beschikbaar.");
             network_card.set_usage(None);
         }
         None => {
             network_card.primary.set_text("N/B");
             network_card.secondary.set_text("Netwerktelemetrie niet beschikbaar");
-            network_card.details.set_text("Er kon geen netwerk-informatie worden verzameld.");
+            set_metric_details(&network_card.details, "Er kon geen netwerk-informatie worden verzameld.");
             network_card.set_usage(None);
         }
     }
@@ -877,6 +872,52 @@ fn render_snapshot(
 }
 
 
+
+
+fn set_metric_details(container: &gtk::Box, text: &str) {
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
+    }
+
+    let lines = text.lines().filter(|line| !line.trim().is_empty()).take(3);
+    for line in lines {
+        let row = gtk::Box::new(Orientation::Horizontal, 8);
+        row.set_hexpand(true);
+        row.set_halign(Align::Fill);
+
+        if let Some((label_text, value_text)) = line.split_once(':') {
+            let label = gtk::Label::new(Some(label_text.trim()));
+            label.set_halign(Align::Start);
+            label.set_xalign(0.0);
+            label.set_single_line_mode(true);
+            label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            label.set_hexpand(true);
+            label.add_css_class("dim-label");
+
+            let value = gtk::Label::new(Some(value_text.trim()));
+            value.set_halign(Align::End);
+            value.set_xalign(1.0);
+            value.set_single_line_mode(true);
+            value.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            value.set_max_width_chars(32);
+            value.set_selectable(true);
+            value.add_css_class("numeric");
+            row.append(&label);
+            row.append(&value);
+        } else {
+            let value = gtk::Label::new(Some(line.trim()));
+            value.set_halign(Align::Start);
+            value.set_xalign(0.0);
+            value.set_single_line_mode(true);
+            value.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            value.set_hexpand(true);
+            value.set_selectable(true);
+            value.add_css_class("dim-label");
+            row.append(&value);
+        }
+        container.append(&row);
+    }
+}
 
 fn install_styles() {
     let Some(display) = gtk::gdk::Display::default() else { return };
