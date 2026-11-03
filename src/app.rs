@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::VecDeque, sync::mpsc::TryRecvError, time::Duration};
+use std::{sync::mpsc::TryRecvError, time::Duration};
 
 use adw::prelude::*;
 use adw::{Application, ApplicationWindow, HeaderBar, ToolbarView};
@@ -13,7 +13,6 @@ use crate::{
 };
 
 const UI_POLL_INTERVAL: Duration = Duration::from_millis(100);
-const HISTORY_POINTS: usize = 60;
 
 struct MetricCard {
     primary: gtk::Label,
