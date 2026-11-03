@@ -700,7 +700,7 @@ fn render_snapshot(
         d.memory_clock_mhz.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned()),
         d.fan_percent.map(|v| format!("{v}%")).unwrap_or_else(|| "N/B".to_owned()),
         d.encoder_busy_percent.map(|v| format!("{v}%")).unwrap_or_else(|| "N/B".to_owned()),
-        d.decoder_busy_percent.map(|v| format!("{v}%").unwrap_or_else(|| "N/B".to_owned()),
+        d.decoder_busy_percent.map(|v| format!("{v}%")).unwrap_or_else(|| "N/B".to_owned()),
         d.drm_card.as_deref().unwrap_or("N/B"), d.pci_address.as_deref().unwrap_or("N/B"),
         d.driver.as_deref().unwrap_or("N/B"), d.telemetry_source.unwrap_or("N/B"), d.uuid.as_deref().unwrap_or("N/B")
     )).collect::<Vec<_>>().join("\n\n")).unwrap_or_else(|| "# GPU\nGPU-telemetrie niet beschikbaar".to_owned());
