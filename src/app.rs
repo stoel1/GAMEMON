@@ -5,7 +5,7 @@ use adw::{Application, ApplicationWindow, HeaderBar, ToolbarView};
 use gtk::{Align, Orientation};
 
 use crate::{
-    collectors::{cpu, gpu, memory, network},
+    collectors::cpu,
     core::{
         config::AppConfig,
         sampler::{self, MonitorSnapshot, SamplerConfig},
@@ -51,7 +51,7 @@ impl MetricCard {
         progress.set_fraction(0.0);
         progress.add_css_class("osd");
 
-        let history = Rc::new(RefCell::new(VecDeque::with_capacity(60)));
+        let history = Rc::new(RefCell::new(VecDeque::<f64>::with_capacity(60)));
         let chart = gtk::DrawingArea::new();
         chart.set_content_height(52);
         chart.set_hexpand(true);
