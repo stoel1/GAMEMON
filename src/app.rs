@@ -910,7 +910,7 @@ fn set_metric_details(container: &gtk::Box, text: &str) {
             value.set_single_line_mode(true);
             value.set_ellipsize(gtk::pango::EllipsizeMode::End);
             value.set_max_width_chars(32);
-            value.set_selectable(true);
+            value.set_selectable(false);
             value.add_css_class("numeric");
             row.append(&label);
             row.append(&value);
@@ -921,7 +921,7 @@ fn set_metric_details(container: &gtk::Box, text: &str) {
             value.set_single_line_mode(true);
             value.set_ellipsize(gtk::pango::EllipsizeMode::End);
             value.set_hexpand(true);
-            value.set_selectable(true);
+            value.set_selectable(false);
             value.add_css_class("dim-label");
             row.append(&value);
         }
