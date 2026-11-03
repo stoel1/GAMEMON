@@ -30,5 +30,7 @@ The Rust migration is not a stable release. The archived Bash implementation rem
 - Added utilization progress indicators and expanded the default window to give the dashboard more room.
 - Kept telemetry collection in the background sampler and GTK updates on the main thread.
 - Added rolling 60-sample sparkline histories for CPU, GPU and memory utilization, drawn directly by GTK without a charting dependency.
+- Added Linux uptime and load-average readings from procfs.
+- Added dynamic hwmon discovery for temperature and fan RPM readings, preserving labels exported by the kernel.
 - Grouped duplicate exported RAPL package labels in the overview so repeated sysfs aliases do not flood the CPU card.
 - This remains an evolving dashboard; dedicated device pages, navigation and richer time-series controls remain planned.
