@@ -43,6 +43,7 @@ The Rust application is the primary development target. The former Bash monitor 
 - [x] Overview detail text is line-limited to stabilize card heights.
 - [ ] Responsive switch to a single column on narrow windows.
 - [x] Reduce default information density in CPU, storage and process overview cards.
+- [x] Smooth interpolation of CPU/GPU/memory chart traces and progress indicators between hardware samples.
 - [ ] Dashboard verder verfijnen met statusindicatoren, tijdschaal en lege-/foutstatussen.
 - [ ] Afzonderlijke apparaatweergaven en navigatie.
 - [ ] Hardware discovery and hotplug handling.
