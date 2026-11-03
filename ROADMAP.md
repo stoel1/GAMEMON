@@ -32,7 +32,8 @@ The Rust application is the primary development target. The former Bash monitor 
 - [ ] Sensor selection.
 - [x] Eerste metricgerichte dashboard met CPU-, GPU-, geheugen- en netwerkkaarten.
 - [x] Primaire waarden, ondersteunende details en gebruiksindicatoren in de overzichtskaarten.
-- [ ] Dashboard verder verfijnen met tijdreeksgrafieken en statusindicatoren.
+- [x] Rolling 60-sample utilization sparklines for CPU, GPU and memory.
+- [ ] Dashboard verder verfijnen met statusindicatoren, tijdschaal en lege-/foutstatussen.
 - [ ] Afzonderlijke apparaatweergaven en navigatie.
 - [ ] Hardware discovery and hotplug handling.
 - [ ] RHEL 10 RPM packaging and lifecycle tests.
