@@ -417,6 +417,22 @@ pub fn activate(application: &Application) {
     menu_button.set_popover(Some(&popover));
     let header = HeaderBar::new();
     header.pack_start(&menu_button);
+    if let Some(history) = history_store.clone() {
+        let export_button = gtk::Button::with_label("Exporteer CSV");
+        export_button.set_tooltip_text(Some("Kopieer de meetgeschiedenis naar Downloads"));
+        export_button.connect_clicked(move |_| {
+            let destination = std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .map(|home| home.join("Downloads/gamemon-history.csv"));
+            if let Some(destination) = destination {
+                match history.export_csv(&destination) {
+                    Ok(_) => tracing::info!(path = %destination.display(), "monitoring history exported"),
+                    Err(error) => tracing::warn!(%error, "could not export monitoring history"),
+                }
+            }
+        });
+        header.pack_end(&export_button);
+    }
     let toolbar = ToolbarView::new();
     toolbar.add_top_bar(&header);
     toolbar.set_content(Some(&stack));
@@ -432,6 +448,7 @@ pub fn activate(application: &Application) {
     let receiver = sampler::start(SamplerConfig {
         interval: config.refresh_interval(),
     });
+    let history_store = crate::core::history::HistoryStore::new().map(Rc::new);
 
     let cpu_card = downgrade_card(cpu_card);
     let gpu_card = downgrade_card(gpu_card);
@@ -444,6 +461,7 @@ pub fn activate(application: &Application) {
 
     let mut detail_expanded: BTreeMap<String, BTreeMap<String, bool>> = BTreeMap::new();
 
+    let history_for_timer = history_store.clone();
     gtk::glib::timeout_add_local(UI_POLL_INTERVAL, move || {
         let (Some(cpu_card), Some(gpu_card), Some(memory_card), Some(network_card), Some(system_card), Some(sensors_card), Some(storage_card), Some(process_card)) = (
             upgrade_card(&cpu_card),
@@ -477,6 +495,7 @@ pub fn activate(application: &Application) {
             }
         }
         if let Some(snapshot) = latest {
+            if let Some(history) = &history_for_timer { history.append(&snapshot); }
             render_snapshot(&snapshot, &cpu_card, &gpu_card, &memory_card, &network_card, &system_card, &sensors_card, &storage_card, &process_card, &detail_labels, &mut detail_expanded, &detail_charts);
         }
         gtk::glib::ControlFlow::Continue
