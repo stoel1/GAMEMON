@@ -1,4 +1,4 @@
-use std::{cell::{Cell, RefCell}, collections::VecDeque, rc::Rc, sync::mpsc::TryRecvError, time::Duration};
+use std::{cell::{Cell, RefCell}, collections::{BTreeMap, VecDeque}, rc::Rc, sync::mpsc::TryRecvError, time::Duration};
 
 use adw::prelude::*;
 use adw::{Application, ApplicationWindow, HeaderBar, ToolbarView};
@@ -289,13 +289,87 @@ pub fn activate(application: &Application) {
     footer.add_css_class("caption");
     content.append(&footer);
 
-    let scrolled = gtk::ScrolledWindow::new();
-    scrolled.set_vexpand(true);
-    scrolled.set_child(Some(&content));
+    let stack = gtk::Stack::new();
+    stack.set_transition_type(gtk::StackTransitionType::SlideLeftRight);
+    stack.set_transition_duration(180);
+    stack.set_vexpand(true);
+    let overview_scroll = gtk::ScrolledWindow::new();
+    overview_scroll.set_vexpand(true);
+    overview_scroll.set_child(Some(&content));
+    stack.add_named(&overview_scroll, Some("overview"));
 
+    let mut detail_labels = BTreeMap::new();
+    for (key, heading, description) in [
+        ("cpu", "Processor", "Per-logische CPU-belasting, frequentie en topologie."),
+        ("gpu", "Graphics", "GPU-belasting, VRAM, temperatuur, vermogen en kloksnelheden."),
+        ("memory", "Geheugen", "RAM, swap, cache, buffers, HugePages en pressure."),
+        ("motherboard", "Moederbord & sensoren", "Alle hardwaretemperaturen en ventilatorsnelheden."),
+        ("storage", "Opslag", "Bestandssystemen, schijfactiviteit en I/O-tellers."),
+        ("network", "Netwerk", "Interfaces, linkstatus, snelheid, verkeer en fouttellers."),
+        ("processes", "Processen", "Actieve processen met CPU-, geheugen- en statusinformatie."),
+        ("system", "Systeem", "Uptime en load average."),
+    ] {
+        let page = gtk::Box::new(Orientation::Vertical, 12);
+        page.set_margin_top(24);
+        page.set_margin_bottom(24);
+        page.set_margin_start(24);
+        page.set_margin_end(24);
+        let title = gtk::Label::new(Some(heading));
+        title.set_halign(Align::Start);
+        title.add_css_class("title-1");
+        let subtitle = gtk::Label::new(Some(description));
+        subtitle.set_halign(Align::Start);
+        subtitle.set_wrap(true);
+        subtitle.add_css_class("dim-label");
+        let data = gtk::Label::new(Some("Gegevens worden verzameld…"));
+        data.set_halign(Align::Start);
+        data.set_valign(Align::Start);
+        data.set_xalign(0.0);
+        data.set_yalign(0.0);
+        data.set_selectable(true);
+        data.set_wrap(false);
+        data.add_css_class("monospace");
+        page.append(&title);
+        page.append(&subtitle);
+        page.append(&gtk::Separator::new(Orientation::Horizontal));
+        page.append(&data);
+        let page_scroll = gtk::ScrolledWindow::new();
+        page_scroll.set_vexpand(true);
+        page_scroll.set_child(Some(&page));
+        stack.add_named(&page_scroll, Some(key));
+        detail_labels.insert(key.to_owned(), data);
+    }
+    let menu_button = gtk::MenuButton::new();
+    menu_button.set_label("Hardware");
+    let popover = gtk::Popover::new();
+    let menu = gtk::Box::new(Orientation::Vertical, 4);
+    menu.set_margin_top(8);
+    menu.set_margin_bottom(8);
+    menu.set_margin_start(8);
+    menu.set_margin_end(8);
+    for (key, label) in [
+        ("overview", "Overzicht"), ("cpu", "Processor"), ("gpu", "Graphics"),
+        ("memory", "Geheugen"), ("motherboard", "Moederbord & sensoren"),
+        ("storage", "Opslag"), ("network", "Netwerk"), ("processes", "Processen"),
+        ("system", "Systeem"),
+    ] {
+        let button = gtk::Button::with_label(label);
+        button.set_halign(Align::Fill);
+        let target_stack = stack.clone();
+        let target_popover = popover.clone();
+        button.connect_clicked(move |_| {
+            target_stack.set_visible_child_name(key);
+            target_popover.popdown();
+        });
+        menu.append(&button);
+    }
+    popover.set_child(Some(&menu));
+    menu_button.set_popover(Some(&popover));
+    let header = HeaderBar::new();
+    header.pack_start(&menu_button);
     let toolbar = ToolbarView::new();
-    toolbar.add_top_bar(&HeaderBar::new());
-    toolbar.set_content(Some(&scrolled));
+    toolbar.add_top_bar(&header);
+    toolbar.set_content(Some(&stack));
     let window = ApplicationWindow::builder()
         .application(application)
         .title("GAMEMON")
@@ -351,7 +425,7 @@ pub fn activate(application: &Application) {
             }
         }
         if let Some(snapshot) = latest {
-            render_snapshot(&snapshot, &cpu_card, &gpu_card, &memory_card, &network_card, &system_card, &sensors_card, &storage_card, &process_card);
+            render_snapshot(&snapshot, &cpu_card, &gpu_card, &memory_card, &network_card, &system_card, &sensors_card, &storage_card, &process_card, &detail_labels);
         }
         gtk::glib::ControlFlow::Continue
     });
@@ -407,6 +481,7 @@ fn render_snapshot(
     sensors_card: &MetricCard,
     storage_card: &MetricCard,
     process_card: &MetricCard,
+    detail_labels: &BTreeMap<String, gtk::Label>,
 ) {
     let cpu = &snapshot.cpu;
     let cpu_usage = cpu_utilization_value(cpu.utilization);
