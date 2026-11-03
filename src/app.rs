@@ -664,7 +664,124 @@ fn render_snapshot(
             network_card.details.set_text("Er kon geen netwerk-informatie worden verzameld.");
             network_card.set_usage(None);
         }
+
+    let cpu_rows = snapshot.cpu.logical_cpus.iter().map(|core| {
+        let usage = match core.utilization {
+            cpu::CpuUtilization::Available(v) => format!("{v:5.1}%"),
+            cpu::CpuUtilization::WarmingUp => " meten".to_owned(),
+            cpu::CpuUtilization::Unavailable => "   N/B".to_owned(),
+        };
+        format!("CPU{:02}  {}  {:>9}  package={} core={}",
+            core.id, usage,
+            core.current_frequency_hz.map(|hz| format!("{:.0} MHz", hz as f64 / 1_000_000.0)).unwrap_or_else(|| "N/B".to_owned()),
+            core.package_id.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned()),
+            core.core_id.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned()))
+    }).collect::<Vec<_>>().join("\n");
+    set_detail(detail_labels, "cpu", &format!(
+        "Model: {}\nOnline CPU's: {}\nTotale belasting: {}\nGemiddelde klok: {}\nPakketvermogen:\n{}\n\nPer-logische processor\nID     Gebruik  Frequentie  Topologie\n{}",
+        snapshot.cpu.model.as_deref().unwrap_or("N/B"),
+        snapshot.cpu.online.as_deref().unwrap_or("N/B"),
+        format_cpu_utilization(snapshot.cpu.utilization),
+        average_cpu_frequency(&snapshot.cpu),
+        if package_power.is_empty() { "N/B".to_owned() } else { package_power.join("\n") },
+        cpu_rows
+    ));
+
+    let gpu_text = snapshot.gpu.as_ref().map(|gpu| gpu.devices.iter().enumerate().map(|(i, d)| format!(
+        "GPU {i}: {}\nDRM: {} · PCI: {}\nDriver: {} · Telemetrie: {}\nGPU-belasting: {} · Geheugenbelasting: {}\nVRAM: {} / {}\nTemperatuur: {} · Vermogen: {} / limiet {}\nCore clock: {} MHz · Memory clock: {} MHz\nVentilator: {} · Encoder: {} · Decoder: {}\nUUID: {}\n",
+        d.model.as_deref().unwrap_or("N/B"),
+        d.drm_card.as_deref().unwrap_or("N/B"), d.pci_address.as_deref().unwrap_or("N/B"),
+        d.driver.as_deref().unwrap_or("N/B"), d.telemetry_source.unwrap_or("N/B"),
+        d.gpu_busy_percent.map(|v| format!("{v}%")).unwrap_or_else(|| "N/B".to_owned()),
+        d.memory_busy_percent.map(|v| format!("{v}%")).unwrap_or_else(|| "N/B".to_owned()),
+        d.vram_used_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        d.vram_total_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        d.temperature_celsius.map(|v| format!("{v} °C")).unwrap_or_else(|| "N/B".to_owned()),
+        d.power_milliwatts.map(|v| format!("{:.1} W", v as f64 / 1000.0)).unwrap_or_else(|| "N/B".to_owned()),
+        d.power_limit_milliwatts.map(|v| format!("{:.1} W", v as f64 / 1000.0)).unwrap_or_else(|| "N/B".to_owned()),
+        d.graphics_clock_mhz.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned()),
+        d.memory_clock_mhz.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned()),
+        d.fan_percent.map(|v| format!("{v}%")).unwrap_or_else(|| "N/B".to_owned()),
+        d.encoder_busy_percent.map(|v| format!("{v}%")).unwrap_or_else(|| "N/B".to_owned()),
+        d.decoder_busy_percent.map(|v| format!("{v}%")).unwrap_or_else(|| "N/B".to_owned()),
+        d.uuid.as_deref().unwrap_or("N/B")
+    )).collect::<Vec<_>>().join("\n")).unwrap_or_else(|| "GPU-telemetrie niet beschikbaar".to_owned());
+    set_detail(detail_labels, "gpu", &gpu_text);
+
+    let m = snapshot.memory;
+    set_detail(detail_labels, "memory", &format!(
+        "RAM totaal: {}\nRAM gebruikt: {}\nRAM beschikbaar: {}\nRAM vrij: {}\nBuffers: {}\nCache: {}\nSwap totaal: {}\nSwap gebruikt: {}\nSwap vrij: {}\nHugePages totaal/vrij: {} / {}\nHugePage-grootte: {}\nMemory PSI some: {}\nMemory PSI full: {}",
+        m.total_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        m.used_bytes().map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        m.available_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        m.free_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        m.buffers_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        m.cached_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        m.swap_total_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        m.swap_used_bytes().map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        m.swap_free_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        m.huge_pages_total.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned()),
+        m.huge_pages_free.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned()),
+        m.huge_page_size_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        m.pressure.map(|p| format!("avg10 {:.2}% · avg60 {:.2}% · avg300 {:.2}%", p.some.avg10,p.some.avg60,p.some.avg300)).unwrap_or_else(|| "N/B".to_owned()),
+        m.pressure.and_then(|p| p.full).map(|p| format!("avg10 {:.2}% · avg60 {:.2}% · avg300 {:.2}%", p.avg10,p.avg60,p.avg300)).unwrap_or_else(|| "N/B".to_owned())
+    ));
+
+    let sensor_text = snapshot.system.temperatures.iter().map(|v| format!("TEMP  {:<40} {:>7.1} °C", v.label, v.celsius))
+        .chain(snapshot.system.fans.iter().map(|v| format!("FAN   {:<40} {:>7} RPM", v.label, v.rpm)))
+        .collect::<Vec<_>>().join("\n");
+    set_detail(detail_labels, "motherboard", &if sensor_text.is_empty() { "Geen hwmon-sensoren beschikbaar".to_owned() } else { sensor_text });
+
+    let storage_text = snapshot.storage.filesystems.iter().map(|fs| format!(
+        "MOUNT {:<24} {:<8} {} / {} · beschikbaar {} · {}",
+        fs.mountpoint, fs.filesystem,
+        fs.used_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        fs.total_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        fs.available_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()), fs.device
+    )).chain(snapshot.storage.devices.iter().map(|d| format!(
+        "DISK  {:<16} lezen {:>12} · schrijven {:>12} · reads {} · writes {}",
+        d.name,
+        d.read_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()),
+        d.write_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()),
+        d.reads_completed.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned()),
+        d.writes_completed.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned())
+    ))).collect::<Vec<_>>().join("\n");
+    set_detail(detail_labels, "storage", &storage_text);
+
+    let process_text = snapshot.processes.processes.iter().map(|p| format!(
+        "{:>7}  {:<28} {:>8}  {:>12}  {}",
+        p.pid, p.name,
+        p.cpu_percent.map(|v| format!("{v:.1}%")).unwrap_or_else(|| "N/B".to_owned()),
+        p.memory_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        p.state.map(|v| v.to_string()).unwrap_or_else(|| "?".to_owned())
+    )).collect::<Vec<_>>().join("\n");
+    set_detail(detail_labels, "processes", &format!("PID     Proces                         CPU       Geheugen      Status\n{}", process_text));
+
+    let network_text = snapshot.network.as_ref().map(|n| n.interfaces.iter().map(|i| format!(
+        "{}\n  Status: {} · carrier: {} · link: {} · duplex: {}\n  RX: {} · TX: {}\n  Totaal RX: {} · TX: {}\n  Errors RX/TX: {} / {} · Drops RX/TX: {} / {}",
+        i.name,
+        i.operational_state.as_deref().unwrap_or("N/B"),
+        i.carrier.map(|v| if v { "ja" } else { "nee" }).unwrap_or("N/B"),
+        i.speed_mbps.map(|v| format!("{v} Mbps")).unwrap_or_else(|| "N/B".to_owned()),
+        i.duplex.as_deref().unwrap_or("N/B"),
+        i.rx_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()),
+        i.tx_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()),
+        i.rx_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        i.tx_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        i.rx_errors.unwrap_or(0), i.tx_errors.unwrap_or(0), i.rx_dropped.unwrap_or(0), i.tx_dropped.unwrap_or(0)
+    )).collect::<Vec<_>>().join("\n")).unwrap_or_else(|| "Netwerkgegevens niet beschikbaar".to_owned());
+    set_detail(detail_labels, "network", &network_text);
+
+    set_detail(detail_labels, "system", &format!(
+        "Uptime: {}\nLoad average (1 / 5 / 15 min): {}",
+        snapshot.system.uptime_seconds.map(|v| format!("{v} seconden")).unwrap_or_else(|| "N/B".to_owned()),
+        snapshot.system.load_average.map(|v| format!("{:.2} · {:.2} · {:.2}", v[0],v[1],v[2])).unwrap_or_else(|| "N/B".to_owned())
+    ));
     }
+}
+
+fn set_detail(labels: &BTreeMap<String, gtk::Label>, key: &str, value: &str) {
+    if let Some(label) = labels.get(key) { label.set_text(value); }
 }
 
 fn cpu_utilization_value(value: cpu::CpuUtilization) -> Option<f64> {
