@@ -32,6 +32,7 @@ impl MetricCard {
         container.set_margin_bottom(18);
         container.set_margin_start(18);
         container.set_margin_end(18);
+        container.set_vexpand(true);
 
         let heading = gtk::Label::new(Some(title));
         heading.set_halign(Align::Start);
@@ -53,7 +54,7 @@ impl MetricCard {
         let progress = gtk::ProgressBar::new();
         progress.set_show_text(false);
         progress.set_fraction(0.0);
-        progress.add_css_class("osd");
+        progress.add_css_class("gamemon-progress");
 
         let history = Rc::new(RefCell::new(VecDeque::<f64>::with_capacity(60)));
         let chart = gtk::DrawingArea::new();
@@ -160,7 +161,8 @@ impl MetricCard {
 
         let details = gtk::Label::new(Some("Gegevens worden verzameld…"));
         details.set_halign(Align::Start);
-        details.set_valign(Align::Start);
+        details.set_valign(Align::Fill);
+        details.set_vexpand(true);
         details.set_wrap(true);
         details.set_lines(3);
         details.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -176,6 +178,7 @@ impl MetricCard {
 
         let frame = gtk::Frame::new(None);
         frame.add_css_class("card");
+        frame.add_css_class("gamemon-metric-card");
         frame.set_child(Some(&container));
         frame.set_hexpand(true);
         frame.set_vexpand(false);
@@ -266,6 +269,7 @@ impl MetricCard {
 }
 
 pub fn activate(application: &Application) {
+    install_styles();
     let (cpu_frame, cpu_card) = MetricCard::new("PROCESSOR", "Totale processorbelasting");
     let (gpu_frame, gpu_card) = MetricCard::new("GRAPHICS", "Grafische processor");
     let (memory_frame, memory_card) = MetricCard::new("GEHEUGEN", "RAM-gebruik");
@@ -852,6 +856,49 @@ fn render_snapshot(
     ));
 }
 
+
+
+fn install_styles() {
+    let Some(display) = gtk::gdk::Display::default() else { return };
+    let provider = gtk::CssProvider::new();
+    provider.load_from_data(r#"
+        progressbar.gamemon-progress {
+            min-height: 7px;
+            border-radius: 999px;
+            background: transparent;
+        }
+        progressbar.gamemon-progress trough {
+            min-height: 7px;
+            border: 0;
+            border-radius: 999px;
+            background: alpha(@theme_fg_color, 0.10);
+        }
+        progressbar.gamemon-progress progress {
+            min-height: 7px;
+            border: 0;
+            border-radius: 999px;
+            background: #59b9f4;
+        }
+        .gamemon-metric-card {
+            border-radius: 14px;
+            transition: border-color 180ms ease;
+        }
+        .gamemon-metric-card:hover {
+            border-color: alpha(#59b9f4, 0.55);
+        }
+        .gamemon-section {
+            padding: 4px 2px;
+        }
+        .gamemon-sparkline {
+            min-height: 88px;
+        }
+    "#);
+    gtk::style_context_add_provider_for_display(
+        &display,
+        &provider,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
+}
 
 fn make_detail_chart() -> (gtk::DrawingArea, Rc<RefCell<VecDeque<f64>>>) {
     let history = Rc::new(RefCell::new(VecDeque::<f64>::with_capacity(60)));
