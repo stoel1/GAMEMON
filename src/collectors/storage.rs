@@ -1,4 +1,4 @@
-use std::{fs, ffi::CString, path::Path};
+use std::{ffi::CString, fs};
 
 #[derive(Debug, Clone)]
 pub struct StorageSnapshot {
@@ -27,9 +27,7 @@ pub struct BlockDeviceSnapshot {
 
 #[derive(Debug, Clone, Copy)]
 struct DiskCounters {
-    reads: u64,
     sectors_read: u64,
-    writes: u64,
     sectors_written: u64,
     sampled_at: std::time::Instant,
 }
@@ -79,7 +77,7 @@ fn parse_diskstats(
             let write_delta = sectors_written.checked_sub(old.sectors_written).map(|value| value as f64 * 512.0 / elapsed);
             (read_delta, write_delta)
         }).unwrap_or((None, None));
-        current.insert(name.to_owned(), DiskCounters { reads, sectors_read, writes, sectors_written, sampled_at: now });
+        current.insert(name.to_owned(), DiskCounters { sectors_read, sectors_written, sampled_at: now });
         devices.push(BlockDeviceSnapshot {
             name: name.to_owned(),
             read_bytes_per_second: read_rate,
