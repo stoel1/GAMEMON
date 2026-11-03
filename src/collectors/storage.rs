@@ -120,7 +120,7 @@ fn read_filesystems() -> Vec<FilesystemSnapshot> {
 }
 
 fn filesystem_space(mountpoint: &str) -> (Option<u64>, Option<u64>) {
-    let path = CString::new(mountpoint).ok()?;
+    let Ok(path) = CString::new(mountpoint) else { return (None, None) };
     let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit();
     let result = unsafe { libc::statvfs(path.as_ptr(), stats.as_mut_ptr()) };
     if result != 0 { return (None, None); }
