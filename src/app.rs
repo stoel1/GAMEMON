@@ -1,4 +1,4 @@
-use std::{sync::mpsc::TryRecvError, time::Duration};
+use std::{cell::RefCell, collections::VecDeque, rc::Rc, sync::mpsc::TryRecvError, time::Duration};
 
 use adw::prelude::*;
 use adw::{Application, ApplicationWindow, HeaderBar, ToolbarView};
@@ -18,6 +18,8 @@ struct MetricCard {
     primary: gtk::Label,
     secondary: gtk::Label,
     progress: gtk::ProgressBar,
+    history: Rc<RefCell<VecDeque<f64>>>,
+    chart: gtk::DrawingArea,
     details: gtk::Label,
 }
 
@@ -49,6 +51,36 @@ impl MetricCard {
         progress.set_fraction(0.0);
         progress.add_css_class("osd");
 
+        let history = Rc::new(RefCell::new(VecDeque::with_capacity(60)));
+        let chart = gtk::DrawingArea::new();
+        chart.set_content_height(52);
+        chart.set_hexpand(true);
+        chart.add_css_class("gamemon-sparkline");
+        let chart_history = Rc::clone(&history);
+        chart.set_draw_func(move |_, context, width, height| {
+            let values = chart_history.borrow();
+            if values.len() < 2 || width <= 1 || height <= 1 {
+                return;
+            }
+            let width = f64::from(width);
+            let height = f64::from(height);
+            let points = values.iter().copied().collect::<Vec<_>>();
+            context.set_line_width(1.8);
+            context.set_line_cap(gtk::cairo::LineCap::Round);
+            context.set_line_join(gtk::cairo::LineJoin::Round);
+            context.set_source_rgba(0.35, 0.72, 0.95, 0.95);
+            for (index, value) in points.iter().enumerate() {
+                let x = index as f64 / (points.len() - 1) as f64 * width;
+                let y = height - (value.clamp(0.0, 100.0) / 100.0 * (height - 6.0)) - 3.0;
+                if index == 0 {
+                    context.move_to(x, y);
+                } else {
+                    context.line_to(x, y);
+                }
+            }
+            let _ = context.stroke();
+        });
+
         let details = gtk::Label::new(Some("Gegevens worden verzameld…"));
         details.set_halign(Align::Start);
         details.set_valign(Align::Start);
@@ -60,6 +92,7 @@ impl MetricCard {
         container.append(&primary);
         container.append(&secondary);
         container.append(&progress);
+        container.append(&chart);
         container.append(&details);
 
         let frame = gtk::Frame::new(None);
@@ -74,6 +107,8 @@ impl MetricCard {
                 primary,
                 secondary,
                 progress,
+                history,
+                chart,
                 details,
             },
         )
@@ -81,7 +116,15 @@ impl MetricCard {
 
     fn set_usage(&self, value: Option<f64>) {
         if let Some(value) = value.filter(|value| value.is_finite()) {
-            self.progress.set_fraction((value / 100.0).clamp(0.0, 1.0));
+            let value = value.clamp(0.0, 100.0);
+            self.progress.set_fraction(value / 100.0);
+            let mut history = self.history.borrow_mut();
+            if history.len() == 60 {
+                history.pop_front();
+            }
+            history.push_back(value);
+            drop(history);
+            self.chart.queue_draw();
         } else {
             self.progress.set_fraction(0.0);
         }
@@ -193,6 +236,8 @@ fn downgrade_card(card: MetricCard) -> WeakMetricCard {
         primary: card.primary.downgrade(),
         secondary: card.secondary.downgrade(),
         progress: card.progress.downgrade(),
+        chart: card.chart.downgrade(),
+        history: Rc::clone(&card.history),
         details: card.details.downgrade(),
     }
 }
@@ -201,6 +246,8 @@ struct WeakMetricCard {
     primary: gtk::glib::WeakRef<gtk::Label>,
     secondary: gtk::glib::WeakRef<gtk::Label>,
     progress: gtk::glib::WeakRef<gtk::ProgressBar>,
+    chart: gtk::glib::WeakRef<gtk::DrawingArea>,
+    history: Rc<RefCell<VecDeque<f64>>>,
     details: gtk::glib::WeakRef<gtk::Label>,
 }
 
@@ -209,6 +256,8 @@ fn upgrade_card(card: &WeakMetricCard) -> Option<MetricCard> {
         primary: card.primary.upgrade()?,
         secondary: card.secondary.upgrade()?,
         progress: card.progress.upgrade()?,
+        chart: card.chart.upgrade()?,
+        history: Rc::clone(&card.history),
         details: card.details.upgrade()?,
     })
 }
@@ -226,8 +275,16 @@ fn render_snapshot(
     cpu_card.set_usage(cpu_usage);
     cpu_card.secondary.set_text(cpu.model.as_deref().unwrap_or("CPU-model niet beschikbaar"));
     let average_frequency = average_cpu_frequency(cpu);
-    let package_power = cpu.package_power_domains.iter()
-        .filter_map(|domain| domain.power_watts.map(|watts| format!("{}: {watts:.1} W", domain.name)))
+    let mut power_by_domain = std::collections::BTreeMap::<String, f64>::new();
+    for domain in &cpu.package_power_domains {
+        if let Some(watts) = domain.power_watts.filter(|value| value.is_finite()) {
+            power_by_domain.entry(domain.name.clone())
+                .and_modify(|current| *current = current.max(watts))
+                .or_insert(watts);
+        }
+    }
+    let package_power = power_by_domain.iter()
+        .map(|(name, watts)| format!("{name}: {watts:.1} W"))
         .collect::<Vec<_>>();
     cpu_card.details.set_text(&format!(
         "{} logische CPU's · Gemiddelde gerapporteerde klok: {}\nPakketvermogen: {}",
