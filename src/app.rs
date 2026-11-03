@@ -674,7 +674,7 @@ fn render_snapshot(
             core.current_frequency_hz.map(|hz| format!("{:.0} MHz", hz as f64 / 1_000_000.0)).unwrap_or_else(|| "N/B".to_owned()),
             core.package_id.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned()),
             core.core_id.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned()))
-    }).collect::<Vec<_>>>().join("\n");
+    }).collect::<Vec<_>>().join("\n");
     set_detail(detail_labels, "cpu", &format!(
         "# Processoroverzicht\nModel: {}\nOnline CPU's: {}\nTotale belasting: {}\nGemiddelde klok: {}\n\n# Pakketvermogen\n{}\n\n# Logische processors · {} threads\n{}",
         snapshot.cpu.model.as_deref().unwrap_or("N/B"),
