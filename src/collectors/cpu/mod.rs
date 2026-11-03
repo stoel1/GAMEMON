@@ -27,6 +27,8 @@ pub struct LogicalCpuSnapshot {
     pub utilization: CpuUtilization,
     pub package_id: Option<u32>,
     pub core_id: Option<u32>,
+    /// Linux topology core_type: 1 = efficiency (Atom), 2 = performance (Core).
+    pub core_type: Option<u32>,
     pub current_frequency_hz: Option<u64>,
 }
 
@@ -46,6 +48,7 @@ struct CpuStatSnapshot {
 struct CpuTopology {
     package_id: Option<u32>,
     core_id: Option<u32>,
+    core_type: Option<u32>,
 }
 
 #[derive(Debug, Default)]
@@ -113,6 +116,7 @@ impl CpuCollector {
                     utilization: cpu_utilization,
                     package_id: topology.package_id,
                     core_id: topology.core_id,
+                    core_type: topology.core_type,
                     current_frequency_hz: read_current_frequency(id),
                 });
             }
@@ -137,6 +141,9 @@ fn read_topology(cpu_id: u32) -> CpuTopology {
             .ok()
             .and_then(|value| value.trim().parse().ok()),
         core_id: fs::read_to_string(format!("{path}/core_id"))
+            .ok()
+            .and_then(|value| value.trim().parse().ok()),
+        core_type: fs::read_to_string(format!("{path}/core_type"))
             .ok()
             .and_then(|value| value.trim().parse().ok()),
     }
