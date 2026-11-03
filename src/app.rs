@@ -209,6 +209,8 @@ pub fn activate(application: &Application) {
     let (network_frame, network_card) = MetricCard::new("NETWERK", "Actuele netwerkdoorvoer");
     let (system_frame, system_card) = MetricCard::new("SYSTEEM", "Uptime en load average");
     let (sensors_frame, sensors_card) = MetricCard::new("SENSOREN", "Temperaturen en ventilatoren");
+    let (storage_frame, storage_card) = MetricCard::new("OPSLAG", "Bestandssystemen en schijfactiviteit");
+    let (process_frame, process_card) = MetricCard::new("PROCESSEN", "Actieve processen · CPU en geheugen");
 
     let content = gtk::Box::new(Orientation::Vertical, 18);
     content.set_margin_top(24);
@@ -238,6 +240,8 @@ pub fn activate(application: &Application) {
     grid.attach(&network_frame, 1, 1, 1, 1);
     grid.attach(&system_frame, 0, 2, 1, 1);
     grid.attach(&sensors_frame, 1, 2, 1, 1);
+    grid.attach(&storage_frame, 0, 3, 1, 1);
+    grid.attach(&process_frame, 1, 3, 1, 1);
     content.append(&grid);
 
     let footer = gtk::Label::new(Some("Gegevens worden lokaal gelezen via Linux procfs, sysfs en ondersteunde driverinterfaces."));
@@ -273,15 +277,19 @@ pub fn activate(application: &Application) {
     let network_card = downgrade_card(network_card);
     let system_card = downgrade_card(system_card);
     let sensors_card = downgrade_card(sensors_card);
+    let storage_card = downgrade_card(storage_card);
+    let process_card = downgrade_card(process_card);
 
     gtk::glib::timeout_add_local(UI_POLL_INTERVAL, move || {
-        let (Some(cpu_card), Some(gpu_card), Some(memory_card), Some(network_card), Some(system_card), Some(sensors_card)) = (
+        let (Some(cpu_card), Some(gpu_card), Some(memory_card), Some(network_card), Some(system_card), Some(sensors_card), Some(storage_card), Some(process_card)) = (
             upgrade_card(&cpu_card),
             upgrade_card(&gpu_card),
             upgrade_card(&memory_card),
             upgrade_card(&network_card),
             upgrade_card(&system_card),
             upgrade_card(&sensors_card),
+            upgrade_card(&storage_card),
+            upgrade_card(&process_card),
         ) else {
             return gtk::glib::ControlFlow::Break;
         };
@@ -298,12 +306,14 @@ pub fn activate(application: &Application) {
                     network_card.primary.set_text("Niet beschikbaar");
                     system_card.primary.set_text("Niet beschikbaar");
                     sensors_card.primary.set_text("Niet beschikbaar");
+                    storage_card.primary.set_text("Niet beschikbaar");
+                    process_card.primary.set_text("Niet beschikbaar");
                     return gtk::glib::ControlFlow::Break;
                 }
             }
         }
         if let Some(snapshot) = latest {
-            render_snapshot(&snapshot, &cpu_card, &gpu_card, &memory_card, &network_card, &system_card, &sensors_card);
+            render_snapshot(&snapshot, &cpu_card, &gpu_card, &memory_card, &network_card, &system_card, &sensors_card, &storage_card, &process_card);
         }
         gtk::glib::ControlFlow::Continue
     });
@@ -351,6 +361,8 @@ fn render_snapshot(
     network_card: &MetricCard,
     system_card: &MetricCard,
     sensors_card: &MetricCard,
+    storage_card: &MetricCard,
+    process_card: &MetricCard,
 ) {
     let cpu = &snapshot.cpu;
     let cpu_usage = cpu_utilization_value(cpu.utilization);
@@ -375,6 +387,17 @@ fn render_snapshot(
         average_frequency,
         if package_power.is_empty() { "Niet beschikbaar".to_owned() } else { package_power.join(" · ") }
     ));
+    let core_lines = cpu.logical_cpus.iter().take(16).map(|core| {
+        let usage = match core.utilization {
+            cpu::CpuUtilization::Available(value) => format!("{value:4.1}%"),
+            cpu::CpuUtilization::WarmingUp => " meten".to_owned(),
+            cpu::CpuUtilization::Unavailable => " N/B".to_owned(),
+        };
+        format!("CPU{:02}  {}  {}", core.id, usage, core.current_frequency_hz.map(|hz| format!("{:.0} MHz", hz as f64 / 1_000_000.0)).unwrap_or_else(|| "klok N/B".to_owned()))
+    }).collect::<Vec<_>>();
+    if !core_lines.is_empty() {
+        cpu_card.details.set_text(&format!("{}\n{}", cpu_card.details.text(), core_lines.join("\n")));
+    }
 
     match &snapshot.gpu {
         Some(gpu) if !gpu.devices.is_empty() => {
@@ -458,6 +481,50 @@ fn render_snapshot(
         sensors_card.details.set_text(&temperatures.into_iter().chain(fans).collect::<Vec<_>>().join("\n"));
     }
     sensors_card.set_usage(None);
+
+    let filesystems = &snapshot.storage.filesystems;
+    let total_capacity = filesystems.iter().filter_map(|fs| fs.total_bytes).sum::<u64>();
+    let total_used = filesystems.iter().filter_map(|fs| fs.used_bytes).sum::<u64>();
+    if filesystems.is_empty() {
+        storage_card.primary.set_text("Geen bestandssystemen");
+        storage_card.secondary.set_text("Opslaginformatie niet beschikbaar");
+    } else {
+        storage_card.primary.set_text(&format!("{} bestandssystemen", filesystems.len()));
+        storage_card.secondary.set_text(&format!("{} gebruikt van {}", format_bytes(total_used), format_bytes(total_capacity)));
+    }
+    let mounts = filesystems.iter().take(8).map(|fs| {
+        let used = fs.used_bytes.zip(fs.total_bytes.filter(|total| *total > 0))
+            .map(|(used,total)| format!("{:.0}%", used as f64 / total as f64 * 100.0))
+            .unwrap_or_else(|| "N/B".to_owned());
+        format!("{} · {} · {} / {} ({})", fs.mountpoint, fs.filesystem,
+            fs.used_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+            fs.total_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()), used)
+    }).collect::<Vec<_>>();
+    let io = snapshot.storage.devices.iter().filter(|device|
+        device.read_bytes_per_second.unwrap_or(0.0) > 0.0 || device.write_bytes_per_second.unwrap_or(0.0) > 0.0
+    ).take(6).map(|device| format!("{} · lezen {} · schrijven {}", device.name,
+        device.read_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()),
+        device.write_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned())
+    )).collect::<Vec<_>>();
+    storage_card.details.set_text(&mounts.into_iter().chain(io).collect::<Vec<_>>().join("\n"));
+    storage_card.set_usage(None);
+
+    let processes = &snapshot.processes.processes;
+    process_card.primary.set_text(&format!("{} processen", processes.len()));
+    process_card.secondary.set_text("Gerangschikt op CPU-gebruik");
+    let process_lines = processes.iter().take(12).map(|process| format!(
+        "{:>6}  {:>5}  {:>7}  {}",
+        process.pid,
+        process.cpu_percent.map(|value| format!("{value:.1}%")).unwrap_or_else(|| "N/B".to_owned()),
+        process.memory_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        process.name
+    )).collect::<Vec<_>>();
+    process_card.details.set_text(&if process_lines.is_empty() {
+        "Geen processen beschikbaar".to_owned()
+    } else {
+        format!(" PID    CPU    RAM    Proces\n{}", process_lines.join("\n"))
+    });
+    process_card.set_usage(None);
 
     match &snapshot.network {
         Some(network) if !network.interfaces.is_empty() => {
