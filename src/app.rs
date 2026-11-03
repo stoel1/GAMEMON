@@ -665,31 +665,30 @@ fn render_snapshot(
 
     let cpu_rows = snapshot.cpu.logical_cpus.iter().map(|core| {
         let usage = match core.utilization {
-            cpu::CpuUtilization::Available(v) => format!("{v:5.1}%"),
-            cpu::CpuUtilization::WarmingUp => " meten".to_owned(),
-            cpu::CpuUtilization::Unavailable => "   N/B".to_owned(),
+            cpu::CpuUtilization::Available(v) => format!("{v:.1}%"),
+            cpu::CpuUtilization::WarmingUp => "Meten…".to_owned(),
+            cpu::CpuUtilization::Unavailable => "N/B".to_owned(),
         };
-        format!("CPU{:02}  {}  {:>9}  package={} core={}",
+        format!("CPU{:02}: {} · {} · package {} · core {}",
             core.id, usage,
             core.current_frequency_hz.map(|hz| format!("{:.0} MHz", hz as f64 / 1_000_000.0)).unwrap_or_else(|| "N/B".to_owned()),
             core.package_id.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned()),
             core.core_id.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned()))
-    }).collect::<Vec<_>>().join("\n");
+    }).collect::<Vec<_>>>().join("\n");
     set_detail(detail_labels, "cpu", &format!(
-        "Model: {}\nOnline CPU's: {}\nTotale belasting: {}\nGemiddelde klok: {}\nPakketvermogen:\n{}\n\nPer-logische processor\nID     Gebruik  Frequentie  Topologie\n{}",
+        "# Processoroverzicht\nModel: {}\nOnline CPU's: {}\nTotale belasting: {}\nGemiddelde klok: {}\n\n# Pakketvermogen\n{}\n\n# Logische processors · {} threads\n{}",
         snapshot.cpu.model.as_deref().unwrap_or("N/B"),
         snapshot.cpu.online.as_deref().unwrap_or("N/B"),
         format_cpu_utilization(snapshot.cpu.utilization),
         average_cpu_frequency(&snapshot.cpu),
-        if package_power.is_empty() { "N/B".to_owned() } else { package_power.join("\n") },
+        if package_power.is_empty() { "Geen RAPL-gegevens beschikbaar".to_owned() } else { package_power.join("\n") },
+        snapshot.cpu.logical_cpus.len(),
         cpu_rows
     ));
 
     let gpu_text = snapshot.gpu.as_ref().map(|gpu| gpu.devices.iter().enumerate().map(|(i, d)| format!(
-        "GPU {i}: {}\nDRM: {} · PCI: {}\nDriver: {} · Telemetrie: {}\nGPU-belasting: {} · Geheugenbelasting: {}\nVRAM: {} / {}\nTemperatuur: {} · Vermogen: {} / limiet {}\nCore clock: {} MHz · Memory clock: {} MHz\nVentilator: {} · Encoder: {} · Decoder: {}\nUUID: {}\n",
-        d.model.as_deref().unwrap_or("N/B"),
-        d.drm_card.as_deref().unwrap_or("N/B"), d.pci_address.as_deref().unwrap_or("N/B"),
-        d.driver.as_deref().unwrap_or("N/B"), d.telemetry_source.unwrap_or("N/B"),
+        "# GPU {i} · {}\nGPU-belasting: {}\nGeheugenbelasting: {}\nVRAM gebruikt: {}\nVRAM totaal: {}\nTemperatuur: {}\nVermogen: {}\nVermogenslimiet: {}\nCore clock: {} MHz\nMemory clock: {} MHz\nVentilator: {}\nEncoder: {}\nDecoder: {}\n\n# Identificatie\nDRM: {}\nPCI-adres: {}\nDriver: {}\nTelemetriebron: {}\nUUID: {}",
+        d.model.as_deref().unwrap_or("Onbekende GPU"),
         d.gpu_busy_percent.map(|v| format!("{v}%")).unwrap_or_else(|| "N/B".to_owned()),
         d.memory_busy_percent.map(|v| format!("{v}%")).unwrap_or_else(|| "N/B".to_owned()),
         d.vram_used_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
@@ -701,14 +700,15 @@ fn render_snapshot(
         d.memory_clock_mhz.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned()),
         d.fan_percent.map(|v| format!("{v}%")).unwrap_or_else(|| "N/B".to_owned()),
         d.encoder_busy_percent.map(|v| format!("{v}%")).unwrap_or_else(|| "N/B".to_owned()),
-        d.decoder_busy_percent.map(|v| format!("{v}%")).unwrap_or_else(|| "N/B".to_owned()),
-        d.uuid.as_deref().unwrap_or("N/B")
-    )).collect::<Vec<_>>().join("\n")).unwrap_or_else(|| "GPU-telemetrie niet beschikbaar".to_owned());
+        d.decoder_busy_percent.map(|v| format!("{v}%").unwrap_or_else(|| "N/B".to_owned()),
+        d.drm_card.as_deref().unwrap_or("N/B"), d.pci_address.as_deref().unwrap_or("N/B"),
+        d.driver.as_deref().unwrap_or("N/B"), d.telemetry_source.unwrap_or("N/B"), d.uuid.as_deref().unwrap_or("N/B")
+    )).collect::<Vec<_>>().join("\n\n")).unwrap_or_else(|| "# GPU\nGPU-telemetrie niet beschikbaar".to_owned());
     set_detail(detail_labels, "gpu", &gpu_text);
 
     let m = snapshot.memory;
     set_detail(detail_labels, "memory", &format!(
-        "RAM totaal: {}\nRAM gebruikt: {}\nRAM beschikbaar: {}\nRAM vrij: {}\nBuffers: {}\nCache: {}\nSwap totaal: {}\nSwap gebruikt: {}\nSwap vrij: {}\nHugePages totaal/vrij: {} / {}\nHugePage-grootte: {}\nMemory PSI some: {}\nMemory PSI full: {}",
+        "# RAM\nTotaal: {}\nGebruikt: {}\nBeschikbaar: {}\nVrij: {}\nBuffers: {}\nCache: {}\n\n# Swap\nTotaal: {}\nGebruikt: {}\nVrij: {}\n\n# HugePages\nTotaal: {}\nVrij: {}\nPaginaformaat: {}\n\n# Memory pressure (PSI)\nSome: {}\nFull: {}",
         m.total_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
         m.used_bytes().map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
         m.available_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
@@ -725,40 +725,47 @@ fn render_snapshot(
         m.pressure.and_then(|p| p.full).map(|p| format!("avg10 {:.2}% · avg60 {:.2}% · avg300 {:.2}%", p.avg10,p.avg60,p.avg300)).unwrap_or_else(|| "N/B".to_owned())
     ));
 
-    let sensor_text = snapshot.system.temperatures.iter().map(|v| format!("TEMP  {:<40} {:>7.1} °C", v.label, v.celsius))
-        .chain(snapshot.system.fans.iter().map(|v| format!("FAN   {:<40} {:>7} RPM", v.label, v.rpm)))
-        .collect::<Vec<_>>().join("\n");
-    set_detail(detail_labels, "motherboard", &if sensor_text.is_empty() { "Geen hwmon-sensoren beschikbaar".to_owned() } else { sensor_text });
+    let temperature_text = snapshot.system.temperatures.iter().map(|v| format!("{}: {:.1} °C", v.label, v.celsius)).collect::<Vec<_>>().join("\n");
+    let fan_text = snapshot.system.fans.iter().map(|v| format!("{}: {} RPM", v.label, v.rpm)).collect::<Vec<_>>().join("\n");
+    set_detail(detail_labels, "motherboard", &format!(
+        "# Temperatuurmetingen\n{}\n\n# Ventilatoren\n{}",
+        if temperature_text.is_empty() { "Geen temperatuurmetingen beschikbaar" } else { &temperature_text },
+        if fan_text.is_empty() { "Geen ventilatormetingen beschikbaar" } else { &fan_text }
+    ));
 
-    let storage_text = snapshot.storage.filesystems.iter().map(|fs| format!(
-        "MOUNT {:<24} {:<8} {} / {} · beschikbaar {} · {}",
+    let filesystem_text = snapshot.storage.filesystems.iter().map(|fs| format!(
+        "{}: {} · gebruikt {} / {} · beschikbaar {}",
         fs.mountpoint, fs.filesystem,
         fs.used_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
         fs.total_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
-        fs.available_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()), fs.device
-    )).chain(snapshot.storage.devices.iter().map(|d| format!(
-        "DISK  {:<16} lezen {:>12} · schrijven {:>12} · reads {} · writes {}",
+        fs.available_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned())
+    )).collect::<Vec<_>>().join("\n");
+    let disk_text = snapshot.storage.devices.iter().map(|d| format!(
+        "{}: lezen {} · schrijven {} · reads {} · writes {}",
         d.name,
         d.read_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()),
         d.write_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()),
         d.reads_completed.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned()),
         d.writes_completed.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned())
-    ))).collect::<Vec<_>>().join("\n");
-    set_detail(detail_labels, "storage", &storage_text);
+    )).collect::<Vec<_>>().join("\n");
+    set_detail(detail_labels, "storage", &format!(
+        "# Bestandssystemen\n{}\n\n# Schijfactiviteit\n{}",
+        if filesystem_text.is_empty() { "Geen bestandssystemen gevonden" } else { &filesystem_text },
+        if disk_text.is_empty() { "Geen schijfstatistieken beschikbaar" } else { &disk_text }
+    ));
 
     let process_text = snapshot.processes.processes.iter().map(|p| format!(
-        "{:>7}  {:<28} {:>8}  {:>12}  {}",
+        "PID {} · {}: CPU {} · RAM {} · status {}",
         p.pid, p.name,
         p.cpu_percent.map(|v| format!("{v:.1}%")).unwrap_or_else(|| "N/B".to_owned()),
         p.memory_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
         p.state.map(|v| v.to_string()).unwrap_or_else(|| "?".to_owned())
     )).collect::<Vec<_>>().join("\n");
-    set_detail(detail_labels, "processes", &format!("PID     Proces                         CPU       Geheugen      Status\n{}", process_text));
+    set_detail(detail_labels, "processes", &format!("# Actieve processen · {}\n{}", snapshot.processes.processes.len(), if process_text.is_empty() { "Geen processen beschikbaar" } else { &process_text }));
 
     let network_text = snapshot.network.as_ref().map(|n| n.interfaces.iter().map(|i| format!(
-        "{}\n  Status: {} · carrier: {} · link: {} · duplex: {}\n  RX: {} · TX: {}\n  Totaal RX: {} · TX: {}\n  Errors RX/TX: {} / {} · Drops RX/TX: {} / {}",
-        i.name,
-        i.operational_state.as_deref().unwrap_or("N/B"),
+        "# Interface {}\nStatus: {}\nCarrier: {}\nLinksnelheid: {}\nDuplex: {}\nOntvangen: {}\nVerzonden: {}\nTotaal ontvangen: {}\nTotaal verzonden: {}\nRX-fouten: {}\nTX-fouten: {}\nRX-drops: {}\nTX-drops: {}",
+        i.name, i.operational_state.as_deref().unwrap_or("N/B"),
         i.carrier.map(|v| if v { "ja" } else { "nee" }).unwrap_or("N/B"),
         i.speed_mbps.map(|v| format!("{v} Mbps")).unwrap_or_else(|| "N/B".to_owned()),
         i.duplex.as_deref().unwrap_or("N/B"),
@@ -767,13 +774,15 @@ fn render_snapshot(
         i.rx_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
         i.tx_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
         i.rx_errors.unwrap_or(0), i.tx_errors.unwrap_or(0), i.rx_dropped.unwrap_or(0), i.tx_dropped.unwrap_or(0)
-    )).collect::<Vec<_>>().join("\n")).unwrap_or_else(|| "Netwerkgegevens niet beschikbaar".to_owned());
+    )).collect::<Vec<_>>().join("\n\n")).unwrap_or_else(|| "# Netwerk\nNetwerkgegevens niet beschikbaar".to_owned());
     set_detail(detail_labels, "network", &network_text);
 
     set_detail(detail_labels, "system", &format!(
-        "Uptime: {}\nLoad average (1 / 5 / 15 min): {}",
-        snapshot.system.uptime_seconds.map(|v| format!("{v} seconden")).unwrap_or_else(|| "N/B".to_owned()),
-        snapshot.system.load_average.map(|v| format!("{:.2} · {:.2} · {:.2}", v[0],v[1],v[2])).unwrap_or_else(|| "N/B".to_owned())
+        "# Systeemstatus\nUptime: {}\n\n# Load average\n1 minuut: {}\n5 minuten: {}\n15 minuten: {}",
+        snapshot.system.uptime_seconds.map(|v| format_uptime(v)).unwrap_or_else(|| "N/B".to_owned()),
+        snapshot.system.load_average.map(|v| format!("{:.2}",v[0])).unwrap_or_else(|| "N/B".to_owned()),
+        snapshot.system.load_average.map(|v| format!("{:.2}",v[1])).unwrap_or_else(|| "N/B".to_owned()),
+        snapshot.system.load_average.map(|v| format!("{:.2}",v[2])).unwrap_or_else(|| "N/B".to_owned())
     ));
 }
 
@@ -783,27 +792,40 @@ fn set_detail(labels: &BTreeMap<String, gtk::Box>, key: &str, value: &str) {
         container.remove(&child);
     }
 
-    for line in value.lines().filter(|line| !line.trim().is_empty()) {
-        let row = gtk::Frame::new(None);
-        row.add_css_class("card");
-        row.set_hexpand(true);
+    let sections = value.split("\n\n").filter(|section| !section.trim().is_empty()).collect::<Vec<_>>();
+    for (index, section) in sections.iter().enumerate() {
+        let mut lines = section.lines().filter(|line| !line.trim().is_empty());
+        let first = lines.next().unwrap_or("Details");
+        let (heading, first_value) = first.strip_prefix("# ")
+            .map(|heading| (heading.trim(), None))
+            .unwrap_or(("Details", Some(first)));
 
-        let label = gtk::Label::new(Some(line.trim()));
-        label.set_halign(Align::Start);
-        label.set_xalign(0.0);
-        label.set_wrap(true);
-        label.set_selectable(true);
-        label.set_margin_top(10);
-        label.set_margin_bottom(10);
-        label.set_margin_start(12);
-        label.set_margin_end(12);
-        label.add_css_class("body");
+        let expander = gtk::Expander::new(Some(heading));
+        expander.set_expanded(index == 0);
+        expander.add_css_class("gamemon-section");
+        let card = gtk::Frame::new(None);
+        card.add_css_class("card");
+        card.set_hexpand(true);
 
-        row.set_child(Some(&label));
-        container.append(&row);
+        let body = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        body.set_margin_top(10);
+        body.set_margin_bottom(10);
+        body.set_margin_start(12);
+        body.set_margin_end(12);
+
+        if let Some(line) = first_value {
+            append_detail_row(&body, line);
+        }
+        for line in lines {
+            append_detail_row(&body, line);
+        }
+
+        expander.set_child(Some(&body));
+        card.set_child(Some(&expander));
+        container.append(&card);
     }
 
-    if container.first_child().is_none() {
+    if sections.is_empty() {
         let empty = gtk::Label::new(Some("Geen gegevens beschikbaar"));
         empty.set_halign(Align::Start);
         empty.add_css_class("dim-label");
@@ -811,6 +833,37 @@ fn set_detail(labels: &BTreeMap<String, gtk::Box>, key: &str, value: &str) {
     }
 }
 
+fn append_detail_row(container: &gtk::Box, text: &str) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    row.set_hexpand(true);
+
+    if let Some((label_text, value_text)) = text.split_once(':') {
+        let label = gtk::Label::new(Some(label_text.trim()));
+        label.set_halign(Align::Start);
+        label.set_xalign(0.0);
+        label.set_wrap(true);
+        label.set_hexpand(true);
+        label.add_css_class("dim-label");
+
+        let value = gtk::Label::new(Some(value_text.trim()));
+        value.set_halign(Align::End);
+        value.set_xalign(1.0);
+        value.set_wrap(true);
+        value.set_selectable(true);
+        value.add_css_class("numeric");
+
+        row.append(&label);
+        row.append(&value);
+    } else {
+        let label = gtk::Label::new(Some(text.trim()));
+        label.set_halign(Align::Start);
+        label.set_xalign(0.0);
+        label.set_wrap(true);
+        label.set_selectable(true);
+        row.append(&label);
+    }
+    container.append(&row);
+}
 fn cpu_utilization_value(value: cpu::CpuUtilization) -> Option<f64> {
     match value {
         cpu::CpuUtilization::Available(value) if value.is_finite() => Some(value.clamp(0.0, 100.0)),
