@@ -39,6 +39,8 @@ The Rust application is the primary development target. The former Bash monitor 
 - [x] Temperature and fan overview panel backed by hwmon.
 - [x] Storage filesystem usage and block I/O overview panel.
 - [x] Per-logical-CPU utilization and frequency overview.
+- [x] Responsive one/two-column overview layout and more compact dashboard cards.
+- [x] Reduce default information density in CPU, storage and process overview cards.
 - [ ] Dashboard verder verfijnen met statusindicatoren, tijdschaal en lege-/foutstatussen.
 - [ ] Afzonderlijke apparaatweergaven en navigatie.
 - [ ] Hardware discovery and hotplug handling.
