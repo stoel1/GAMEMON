@@ -160,7 +160,7 @@ impl MetricCard {
         details.set_halign(Align::Start);
         details.set_valign(Align::Start);
         details.set_wrap(true);
-        details.set_lines(6);
+        details.set_lines(3);
         details.set_ellipsize(gtk::pango::EllipsizeMode::End);
         details.set_selectable(true);
         details.add_css_class("dim-label");
@@ -178,6 +178,35 @@ impl MetricCard {
         frame.set_hexpand(true);
         frame.set_vexpand(false);
         frame.set_valign(Align::Start);
+        frame.set_size_request(-1, 330);
+
+        // Sleepbare onderrand om de kaart individueel hoger of lager te maken.
+        let resize_grip = gtk::Label::new(Some("⠿  Sleep om kaart te vergroten/verkleinen"));
+        resize_grip.set_halign(Align::End);
+        resize_grip.add_css_class("dim-label");
+        resize_grip.add_css_class("caption");
+        resize_grip.set_margin_top(4);
+        resize_grip.set_cursor_from_name(Some("ns-resize"));
+        container.append(&resize_grip);
+        let drag = gtk::GestureDrag::new();
+        let start_height = Rc::new(Cell::new(330i32));
+        let start_for_begin = Rc::clone(&start_height);
+        let weak_frame = frame.downgrade();
+        drag.connect_drag_begin(move |_, _, _| {
+            if let Some(frame) = weak_frame.upgrade() {
+                let height = frame.height();
+                start_for_begin.set(if height > 0 { height } else { 330 });
+            }
+        });
+        let start_for_update = Rc::clone(&start_height);
+        let weak_frame = frame.downgrade();
+        drag.connect_drag_update(move |_, _, offset_y| {
+            if let Some(frame) = weak_frame.upgrade() {
+                let height = (start_for_update.get() + offset_y.round() as i32).clamp(260, 760);
+                frame.set_size_request(-1, height);
+            }
+        });
+        resize_grip.add_controller(drag);
 
         // Samples arrive at the configured interval; ease visual values at ~60 FPS.
         let weak_progress = progress.downgrade();
@@ -299,6 +328,7 @@ pub fn activate(application: &Application) {
     stack.add_named(&overview_scroll, Some("overview"));
 
     let mut detail_labels: BTreeMap<String, gtk::Box> = BTreeMap::new();
+    let mut detail_charts: BTreeMap<String, (gtk::DrawingArea, Rc<RefCell<VecDeque<f64>>>)> = BTreeMap::new();
     for (key, heading, description) in [
         ("cpu", "Processor", "Per-logische CPU-belasting, frequentie en topologie."),
         ("gpu", "Graphics", "GPU-belasting, VRAM, temperatuur, vermogen en kloksnelheden."),
@@ -323,6 +353,23 @@ pub fn activate(application: &Application) {
         subtitle.add_css_class("dim-label");
         let data = gtk::Box::new(Orientation::Vertical, 8);
         data.set_hexpand(true);
+        let (chart, history) = make_detail_chart();
+        let chart_card = gtk::Frame::new(None);
+        chart_card.add_css_class("card");
+        let chart_content = gtk::Box::new(Orientation::Vertical, 6);
+        chart_content.set_margin_top(12);
+        chart_content.set_margin_bottom(12);
+        chart_content.set_margin_start(12);
+        chart_content.set_margin_end(12);
+        let chart_title = gtk::Label::new(Some("Live trend · laatste 60 metingen"));
+        chart_title.set_halign(Align::Start);
+        chart_title.add_css_class("heading");
+        chart_title.add_css_class("dim-label");
+        chart_content.append(&chart_title);
+        chart_content.append(&chart);
+        chart_card.set_child(Some(&chart_content));
+        page.append(&chart_card);
+        detail_charts.insert(key.to_owned(), (chart, history));
         let loading = gtk::Label::new(Some("Gegevens worden verzameld…"));
         loading.set_halign(Align::Start);
         loading.add_css_class("dim-label");
@@ -424,7 +471,7 @@ pub fn activate(application: &Application) {
             }
         }
         if let Some(snapshot) = latest {
-            render_snapshot(&snapshot, &cpu_card, &gpu_card, &memory_card, &network_card, &system_card, &sensors_card, &storage_card, &process_card, &detail_labels, &mut detail_expanded);
+            render_snapshot(&snapshot, &cpu_card, &gpu_card, &memory_card, &network_card, &system_card, &sensors_card, &storage_card, &process_card, &detail_labels, &mut detail_expanded, &detail_charts);
         }
         gtk::glib::ControlFlow::Continue
     });
@@ -482,9 +529,11 @@ fn render_snapshot(
     process_card: &MetricCard,
     detail_labels: &BTreeMap<String, gtk::Box>,
     detail_expanded: &mut BTreeMap<String, BTreeMap<String, bool>>,
+    detail_charts: &BTreeMap<String, (gtk::DrawingArea, Rc<RefCell<VecDeque<f64>>>)>,
 ) {
     let cpu = &snapshot.cpu;
     let cpu_usage = cpu_utilization_value(cpu.utilization);
+    push_detail_sample(detail_charts, "cpu", cpu_usage);
     cpu_card.primary.set_text(&format_cpu_utilization(cpu.utilization));
     cpu_card.set_usage(cpu_usage);
     cpu_card.secondary.set_text(cpu.model.as_deref().unwrap_or("CPU-model niet beschikbaar"));
@@ -512,6 +561,7 @@ fn render_snapshot(
             let device = &gpu.devices[0];
             let name = device.model.as_deref().unwrap_or("GPU-model niet beschikbaar");
             let usage = device.gpu_busy_percent.map(f64::from);
+            push_detail_sample(detail_charts, "gpu", usage);
             gpu_card.primary.set_text(&usage.map(|value| format!("{value:.0}%")).unwrap_or_else(|| "N/B".to_owned()));
             gpu_card.set_usage(usage);
             gpu_card.secondary.set_text(name);
@@ -546,6 +596,7 @@ fn render_snapshot(
         _ => None,
     };
     memory_card.primary.set_text(&memory_percent.map(|value| format!("{value:.1}%")).unwrap_or_else(|| "N/B".to_owned()));
+    push_detail_sample(detail_charts, "memory", memory_percent);
     memory_card.set_usage(memory_percent);
     memory_card.secondary.set_text(&format!(
         "{} gebruikt van {}",
@@ -565,12 +616,15 @@ fn render_snapshot(
 
     let system = &snapshot.system;
     let uptime = system.uptime_seconds.map(format_uptime).unwrap_or_else(|| "Niet beschikbaar".to_owned());
+    push_detail_sample(detail_charts, "system", system.load_average.map(|v| v[0]));
     let load = system.load_average.map(|values| format!("{:.2} · {:.2} · {:.2}", values[0], values[1], values[2])).unwrap_or_else(|| "Niet beschikbaar".to_owned());
     system_card.primary.set_text(&uptime);
     system_card.secondary.set_text("Systeem actief");
     system_card.details.set_text(&format!("Load average (1 / 5 / 15 min): {load}"));
     system_card.set_usage(None);
 
+    let hottest_temperature = system.temperatures.iter().map(|v| v.celsius).reduce(f64::max);
+    push_detail_sample(detail_charts, "motherboard", hottest_temperature);
     if system.temperatures.is_empty() && system.fans.is_empty() {
         sensors_card.primary.set_text("Geen sensoren");
         sensors_card.secondary.set_text("Geen hwmon-metingen beschikbaar");
@@ -590,6 +644,8 @@ fn render_snapshot(
     }
     sensors_card.set_usage(None);
 
+    let disk_rate = snapshot.storage.devices.iter().filter_map(|d| d.read_bytes_per_second.zip(d.write_bytes_per_second).map(|(r,w)| r+w)).sum::<f64>() / 1_048_576.0;
+    push_detail_sample(detail_charts, "storage", Some(disk_rate));
     let filesystems = &snapshot.storage.filesystems;
     let total_capacity = filesystems.iter().filter_map(|fs| fs.total_bytes).sum::<u64>();
     let total_used = filesystems.iter().filter_map(|fs| fs.used_bytes).sum::<u64>();
@@ -624,6 +680,8 @@ fn render_snapshot(
     storage_card.set_usage(None);
 
     let processes = &snapshot.processes.processes;
+    let process_cpu = processes.iter().filter_map(|p| p.cpu_percent).sum::<f64>();
+    push_detail_sample(detail_charts, "processes", Some(process_cpu));
     process_card.primary.set_text(&format!("{} processen", processes.len()));
     process_card.secondary.set_text("Gerangschikt op CPU-gebruik");
     let process_lines = processes.iter().take(6).map(|process| format!(
@@ -642,6 +700,9 @@ fn render_snapshot(
 
     match &snapshot.network {
         Some(network) if !network.interfaces.is_empty() => {
+            let total_rate = network.interfaces.iter().filter_map(|i| i.rx_bytes_per_second).sum::<f64>()
+                + network.interfaces.iter().filter_map(|i| i.tx_bytes_per_second).sum::<f64>();
+            push_detail_sample(detail_charts, "network", Some(total_rate / 1_048_576.0));
             let active = network.interfaces.iter().filter(|interface| interface.carrier == Some(true) || interface.operational_state.as_deref() == Some("up")).collect::<Vec<_>>();
             let rx = active.iter().filter_map(|interface| interface.rx_bytes_per_second).sum::<f64>();
             let tx = active.iter().filter_map(|interface| interface.tx_bytes_per_second).sum::<f64>();
@@ -789,6 +850,75 @@ fn render_snapshot(
     ));
 }
 
+
+fn make_detail_chart() -> (gtk::DrawingArea, Rc<RefCell<VecDeque<f64>>>) {
+    let history = Rc::new(RefCell::new(VecDeque::<f64>::with_capacity(60)));
+    let chart = gtk::DrawingArea::new();
+    chart.set_content_height(150);
+    chart.set_hexpand(true);
+    chart.add_css_class("gamemon-sparkline");
+    let values = Rc::clone(&history);
+    chart.set_draw_func(move |_, context, width, height| {
+        if width < 2 || height < 2 { return; }
+        let points = values.borrow();
+        if points.len() < 2 { return; }
+        let left = 12.0;
+        let right = f64::from(width) - 12.0;
+        let top = 12.0;
+        let bottom = f64::from(height) - 22.0;
+        let min = points.iter().copied().fold(f64::INFINITY, f64::min);
+        let max = points.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let padding = ((max - min) * 0.15).max(0.5);
+        let low = (min - padding).min(0.0);
+        let high = (max + padding).max(low + 1.0);
+        let span = high - low;
+        context.set_line_width(1.0);
+        context.set_source_rgba(0.65, 0.68, 0.72, 0.22);
+        for tick in 0..=3 {
+            let y = top + (bottom-top) * tick as f64 / 3.0;
+            context.move_to(left, y);
+            context.line_to(right, y);
+            let _ = context.stroke();
+        }
+        let coords = points.iter().enumerate().map(|(i,v)| {
+            let x = left + i as f64 / (points.len()-1) as f64 * (right-left);
+            let y = bottom - ((*v-low)/span) * (bottom-top);
+            (x,y)
+        }).collect::<Vec<_>>();
+        context.set_line_width(2.0);
+        context.set_line_cap(gtk::cairo::LineCap::Round);
+        context.set_line_join(gtk::cairo::LineJoin::Round);
+        context.set_source_rgba(0.35, 0.72, 0.95, 1.0);
+        context.move_to(coords[0].0, coords[0].1);
+        for (x,y) in coords.iter().skip(1) { context.line_to(*x,*y); }
+        let _ = context.stroke();
+        let (x,y) = *coords.last().unwrap();
+        context.arc(x,y,3.5,0.0,std::f64::consts::TAU);
+        let _ = context.fill();
+        context.set_font_size(10.0);
+        context.set_source_rgba(0.72,0.74,0.77,0.9);
+        context.move_to(left,bottom+16.0);
+        let _ = context.show_text("60 metingen geleden");
+        context.move_to(right-18.0,bottom+16.0);
+        let _ = context.show_text("nu");
+    });
+    (chart, history)
+}
+
+fn push_detail_sample(
+    charts: &BTreeMap<String, (gtk::DrawingArea, Rc<RefCell<VecDeque<f64>>>)>,
+    key: &str,
+    value: Option<f64>,
+) {
+    let Some((chart, history)) = charts.get(key) else { return };
+    if let Some(value) = value.filter(|v| v.is_finite()) {
+        let mut values = history.borrow_mut();
+        if values.len() == 60 { values.pop_front(); }
+        values.push_back(value);
+        drop(values);
+        chart.queue_draw();
+    }
+}
 fn set_detail(
     labels: &BTreeMap<String, gtk::Box>,
     expanded_states: &mut BTreeMap<String, BTreeMap<String, bool>>,
