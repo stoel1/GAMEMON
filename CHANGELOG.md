@@ -49,3 +49,6 @@ The Rust migration is not a stable release. The archived Bash implementation rem
 
 - Added approximately 60 FPS easing for CPU, GPU and memory chart traces and progress indicators while retaining the configured hardware sampling interval.
 - Corrected procfs process CPU-time field offsets and the block-device write-throughput test expectation.
+
+- Added a Hardware dropdown with animated navigation between the overview and dedicated CPU, GPU, memory, motherboard/sensors, storage, network, process and system detail pages.
+- Detail pages render full live telemetry from the same shared monitor snapshots; the CPU page lists every online logical CPU with utilization, frequency and topology.
