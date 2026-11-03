@@ -43,3 +43,6 @@ The Rust migration is not a stable release. The archived Bash implementation rem
 - Reworked the overview into a responsive FlowBox layout that adapts between one and two columns.
 - Reduced default dashboard density by moving the full per-logical-CPU list out of the overview summary and limiting storage/process preview rows.
 - Prevented dashboard cards from stretching vertically to fill unused space.
+
+- Replaced homogeneous FlowBox dashboard rows with two independent vertical columns to prevent short cards from inheriting the height of the tallest card in each row.
+- Limited overview detail labels to six lines with ellipsis and capped sensor/network preview rows to stabilize card heights.
