@@ -46,3 +46,6 @@ The Rust migration is not a stable release. The archived Bash implementation rem
 
 - Replaced homogeneous FlowBox dashboard rows with two independent vertical columns to prevent short cards from inheriting the height of the tallest card in each row.
 - Limited overview detail labels to six lines with ellipsis and capped sensor/network preview rows to stabilize card heights.
+
+- Added approximately 60 FPS easing for CPU, GPU and memory chart traces and progress indicators while retaining the configured hardware sampling interval.
+- Corrected procfs process CPU-time field offsets and the block-device write-throughput test expectation.
