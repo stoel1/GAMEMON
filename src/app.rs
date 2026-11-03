@@ -664,6 +664,7 @@ fn render_snapshot(
             network_card.details.set_text("Er kon geen netwerk-informatie worden verzameld.");
             network_card.set_usage(None);
         }
+    }
 
     let cpu_rows = snapshot.cpu.logical_cpus.iter().map(|core| {
         let usage = match core.utilization {
