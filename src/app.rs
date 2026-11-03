@@ -298,7 +298,7 @@ pub fn activate(application: &Application) {
     overview_scroll.set_child(Some(&content));
     stack.add_named(&overview_scroll, Some("overview"));
 
-    let mut detail_labels = BTreeMap::new();
+    let mut detail_labels: BTreeMap<String, gtk::Box> = BTreeMap::new();
     for (key, heading, description) in [
         ("cpu", "Processor", "Per-logische CPU-belasting, frequentie en topologie."),
         ("gpu", "Graphics", "GPU-belasting, VRAM, temperatuur, vermogen en kloksnelheden."),
@@ -321,17 +321,14 @@ pub fn activate(application: &Application) {
         subtitle.set_halign(Align::Start);
         subtitle.set_wrap(true);
         subtitle.add_css_class("dim-label");
-        let data = gtk::Label::new(Some("Gegevens worden verzameld…"));
-        data.set_halign(Align::Start);
-        data.set_valign(Align::Start);
-        data.set_xalign(0.0);
-        data.set_yalign(0.0);
-        data.set_selectable(true);
-        data.set_wrap(false);
-        data.add_css_class("monospace");
+        let data = gtk::Box::new(Orientation::Vertical, 8);
+        data.set_hexpand(true);
+        let loading = gtk::Label::new(Some("Gegevens worden verzameld…"));
+        loading.set_halign(Align::Start);
+        loading.add_css_class("dim-label");
+        data.append(&loading);
         page.append(&title);
         page.append(&subtitle);
-        page.append(&gtk::Separator::new(Orientation::Horizontal));
         page.append(&data);
         let page_scroll = gtk::ScrolledWindow::new();
         page_scroll.set_vexpand(true);
@@ -780,8 +777,38 @@ fn render_snapshot(
     ));
 }
 
-fn set_detail(labels: &BTreeMap<String, gtk::Label>, key: &str, value: &str) {
-    if let Some(label) = labels.get(key) { label.set_text(value); }
+fn set_detail(labels: &BTreeMap<String, gtk::Box>, key: &str, value: &str) {
+    let Some(container) = labels.get(key) else { return };
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
+    }
+
+    for line in value.lines().filter(|line| !line.trim().is_empty()) {
+        let row = gtk::Frame::new(None);
+        row.add_css_class("card");
+        row.set_hexpand(true);
+
+        let label = gtk::Label::new(Some(line.trim()));
+        label.set_halign(Align::Start);
+        label.set_xalign(0.0);
+        label.set_wrap(true);
+        label.set_selectable(true);
+        label.set_margin_top(10);
+        label.set_margin_bottom(10);
+        label.set_margin_start(12);
+        label.set_margin_end(12);
+        label.add_css_class("body");
+
+        row.set_child(Some(&label));
+        container.append(&row);
+    }
+
+    if container.first_child().is_none() {
+        let empty = gtk::Label::new(Some("Geen gegevens beschikbaar"));
+        empty.set_halign(Align::Start);
+        empty.add_css_class("dim-label");
+        container.append(&empty);
+    }
 }
 
 fn cpu_utilization_value(value: cpu::CpuUtilization) -> Option<f64> {
