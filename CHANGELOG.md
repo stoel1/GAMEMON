@@ -39,3 +39,7 @@ The Rust migration is not a stable release. The archived Bash implementation rem
 - Added a process collector using procfs CPU-time deltas and resident memory, with a bounded top-process list.
 - Added per-logical-CPU live utilization bars and frequency readings to the CPU panel.
 - Added storage and process overview panels to the dashboard.
+
+- Reworked the overview into a responsive FlowBox layout that adapts between one and two columns.
+- Reduced default dashboard density by moving the full per-logical-CPU list out of the overview summary and limiting storage/process preview rows.
+- Prevented dashboard cards from stretching vertically to fill unused space.
