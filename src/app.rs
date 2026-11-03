@@ -47,6 +47,8 @@ impl MetricCard {
         secondary.set_halign(Align::Start);
         secondary.add_css_class("dim-label");
         secondary.set_wrap(true);
+        secondary.set_lines(2);
+        secondary.set_ellipsize(gtk::pango::EllipsizeMode::End);
 
         let progress = gtk::ProgressBar::new();
         progress.set_show_text(false);
