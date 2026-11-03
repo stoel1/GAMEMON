@@ -1129,14 +1129,19 @@ fn append_detail_row(container: &gtk::Box, text: &str) {
         let label = gtk::Label::new(Some(label_text.trim()));
         label.set_halign(Align::Start);
         label.set_xalign(0.0);
-        label.set_wrap(true);
+        label.set_single_line_mode(true);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         label.set_hexpand(true);
+        label.set_tooltip_text(Some(label_text.trim()));
         label.add_css_class("dim-label");
 
         let value = gtk::Label::new(Some(value_text.trim()));
         value.set_halign(Align::End);
         value.set_xalign(1.0);
-        value.set_wrap(true);
+        value.set_single_line_mode(true);
+        value.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        value.set_max_width_chars(48);
+        value.set_tooltip_text(Some(value_text.trim()));
         value.set_selectable(true);
         value.add_css_class("numeric");
 
@@ -1146,12 +1151,16 @@ fn append_detail_row(container: &gtk::Box, text: &str) {
         let label = gtk::Label::new(Some(text.trim()));
         label.set_halign(Align::Start);
         label.set_xalign(0.0);
-        label.set_wrap(true);
+        label.set_single_line_mode(true);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        label.set_hexpand(true);
+        label.set_tooltip_text(Some(text.trim()));
         label.set_selectable(true);
         row.append(&label);
     }
     container.append(&row);
 }
+
 fn cpu_utilization_value(value: cpu::CpuUtilization) -> Option<f64> {
     match value {
         cpu::CpuUtilization::Available(value) if value.is_finite() => Some(value.clamp(0.0, 100.0)),
