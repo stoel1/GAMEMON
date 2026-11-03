@@ -154,6 +154,8 @@ impl MetricCard {
         details.set_halign(Align::Start);
         details.set_valign(Align::Start);
         details.set_wrap(true);
+        details.set_lines(6);
+        details.set_ellipsize(gtk::pango::EllipsizeMode::End);
         details.set_selectable(true);
         details.add_css_class("dim-label");
 
@@ -230,22 +232,25 @@ pub fn activate(application: &Application) {
     intro.append(&subtitle);
     content.append(&intro);
 
-    let dashboard = gtk::FlowBox::new();
-    dashboard.set_selection_mode(gtk::SelectionMode::None);
-    dashboard.set_homogeneous(true);
-    dashboard.set_min_children_per_line(1);
-    dashboard.set_max_children_per_line(2);
-    dashboard.set_row_spacing(16);
-    dashboard.set_column_spacing(16);
+    // Two independent vertical stacks avoid FlowBox's equal-height rows,
+    // which created large blank areas below shorter cards.
+    let dashboard = gtk::Box::new(Orientation::Horizontal, 16);
     dashboard.set_hexpand(true);
-    dashboard.append(&cpu_frame);
-    dashboard.append(&gpu_frame);
-    dashboard.append(&memory_frame);
-    dashboard.append(&network_frame);
-    dashboard.append(&system_frame);
-    dashboard.append(&sensors_frame);
-    dashboard.append(&storage_frame);
-    dashboard.append(&process_frame);
+    let left_column = gtk::Box::new(Orientation::Vertical, 16);
+    left_column.set_hexpand(true);
+    left_column.set_valign(Align::Start);
+    let right_column = gtk::Box::new(Orientation::Vertical, 16);
+    right_column.set_hexpand(true);
+    right_column.set_valign(Align::Start);
+
+    for card in [&cpu_frame, &memory_frame, &system_frame, &storage_frame] {
+        left_column.append(card);
+    }
+    for card in [&gpu_frame, &network_frame, &sensors_frame, &process_frame] {
+        right_column.append(card);
+    }
+    dashboard.append(&left_column);
+    dashboard.append(&right_column);
     content.append(&dashboard);
 
     let footer = gtk::Label::new(Some("Gegevens worden lokaal gelezen via Linux procfs, sysfs en ondersteunde driverinterfaces."));
@@ -469,8 +474,8 @@ fn render_snapshot(
             sensors_card.primary.set_text(&format!("{} fans", system.fans.len()));
             sensors_card.secondary.set_text("Ventilatorsnelheden");
         }
-        let temperatures = system.temperatures.iter().take(8).map(|reading| format!("{}: {:.1} °C", reading.label, reading.celsius)).collect::<Vec<_>>();
-        let fans = system.fans.iter().take(6).map(|reading| format!("{}: {} RPM", reading.label, reading.rpm)).collect::<Vec<_>>();
+        let temperatures = system.temperatures.iter().take(3).map(|reading| format!("{}: {:.1} °C", reading.label, reading.celsius)).collect::<Vec<_>>();
+        let fans = system.fans.iter().take(3).map(|reading| format!("{}: {} RPM", reading.label, reading.rpm)).collect::<Vec<_>>();
         sensors_card.details.set_text(&temperatures.into_iter().chain(fans).collect::<Vec<_>>().join("\n"));
     }
     sensors_card.set_usage(None);
@@ -526,7 +531,7 @@ fn render_snapshot(
             let tx = active.iter().filter_map(|interface| interface.tx_bytes_per_second).sum::<f64>();
             network_card.primary.set_text(&format!("↓ {}  ↑ {}", format_rate(rx), format_rate(tx)));
             network_card.secondary.set_text(&format!("{} interfaces · {} actief", network.interfaces.len(), active.len()));
-            network_card.details.set_text(&active.iter().map(|interface| {
+            network_card.details.set_text(&active.iter().take(3).map(|interface| {
                 format!("{} · ↓ {} · ↑ {}", interface.name, format_rate(interface.rx_bytes_per_second.unwrap_or(0.0)), format_rate(interface.tx_bytes_per_second.unwrap_or(0.0)))
             }).collect::<Vec<_>>().join("\n"));
             network_card.set_usage(None);
