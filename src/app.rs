@@ -533,11 +533,17 @@ fn render_snapshot(
             fs.used_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
             fs.total_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()), used)
     }).collect::<Vec<_>>();
+    // Keep the overview list stable: do not hide a disk just because its
+    // current I/O rate is zero. Device-mapper and loop nodes duplicate the
+    // underlying physical storage and make the preview noisy.
     let io = snapshot.storage.devices.iter().filter(|device|
-        device.read_bytes_per_second.unwrap_or(0.0) > 0.0 || device.write_bytes_per_second.unwrap_or(0.0) > 0.0
+        !device.name.starts_with("dm-")
+            && !device.name.starts_with("loop")
+            && !device.name.starts_with("ram")
+            && !device.name.starts_with("zram")
     ).take(3).map(|device| format!("{} · lezen {} · schrijven {}", device.name,
-        device.read_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()),
-        device.write_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned())
+        device.read_bytes_per_second.map(format_rate).unwrap_or_else(|| "0 B/s".to_owned()),
+        device.write_bytes_per_second.map(format_rate).unwrap_or_else(|| "0 B/s".to_owned())
     )).collect::<Vec<_>>();
     storage_card.details.set_text(&mounts.into_iter().chain(io).collect::<Vec<_>>().join("\n"));
     storage_card.set_usage(None);
