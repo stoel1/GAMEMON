@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-use crate::collectors::{cpu, gpu, memory, network, system};
+use crate::collectors::{cpu, gpu, memory, network, process, storage, system};
 
 const MINIMUM_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -29,6 +29,8 @@ pub struct MonitorSnapshot {
     pub memory: memory::MemorySnapshot,
     pub network: Option<network::NetworkSnapshot>,
     pub system: system::SystemSnapshot,
+    pub storage: storage::StorageSnapshot,
+    pub processes: process::ProcessListSnapshot,
 }
 
 #[derive(Default)]
@@ -36,6 +38,8 @@ struct Collectors {
     cpu: cpu::CpuCollector,
     gpu: gpu::GpuCollector,
     network: network::NetworkCollector,
+    storage: storage::StorageCollector,
+    processes: process::ProcessCollector,
 }
 
 impl Collectors {
@@ -45,6 +49,8 @@ impl Collectors {
         let memory = memory::sample();
         let network = self.network.sample();
         let system = system::sample();
+        let storage = self.storage.sample();
+        let processes = self.processes.sample();
         MonitorSnapshot {
             sampled_at: SystemTime::now(),
             cpu,
@@ -52,6 +58,8 @@ impl Collectors {
             memory,
             network,
             system,
+            storage,
+            processes,
         }
     }
 }
