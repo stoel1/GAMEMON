@@ -116,6 +116,7 @@ impl MetricCard {
 
     fn set_usage(&self, value: Option<f64>) {
         if let Some(value) = value.filter(|value| value.is_finite()) {
+            self.chart.set_visible(true);
             let value = value.clamp(0.0, 100.0);
             self.progress.set_fraction(value / 100.0);
             let mut history = self.history.borrow_mut();
@@ -127,6 +128,7 @@ impl MetricCard {
             self.chart.queue_draw();
         } else {
             self.progress.set_fraction(0.0);
+            self.chart.set_visible(false);
         }
     }
 }
