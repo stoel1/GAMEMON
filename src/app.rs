@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::VecDeque, rc::Rc, sync::mpsc::TryRecvError, time::Duration};
+use std::{cell::{Cell, RefCell}, collections::VecDeque, rc::Rc, sync::mpsc::TryRecvError, time::Duration};
 
 use adw::prelude::*;
 use adw::{Application, ApplicationWindow, HeaderBar, ToolbarView};
@@ -19,6 +19,8 @@ struct MetricCard {
     secondary: gtk::Label,
     progress: gtk::ProgressBar,
     history: Rc<RefCell<VecDeque<f64>>>,
+    displayed_usage: Rc<Cell<f64>>,
+    target_usage: Rc<Cell<f64>>,
     chart: gtk::DrawingArea,
     details: gtk::Label,
 }
@@ -56,7 +58,10 @@ impl MetricCard {
         chart.set_content_height(88);
         chart.set_hexpand(true);
         chart.add_css_class("gamemon-sparkline");
+        let displayed_usage = Rc::new(Cell::new(0.0));
+        let target_usage = Rc::new(Cell::new(0.0));
         let chart_history = Rc::clone(&history);
+        let chart_displayed = Rc::clone(&displayed_usage);
         chart.set_draw_func(move |_, context, width, height| {
             let values = chart_history.borrow();
             if values.len() < 2 || width <= 1 || height <= 1 {
@@ -75,7 +80,8 @@ impl MetricCard {
                 return;
             }
 
-            let points = values.iter().copied().collect::<Vec<_>>();
+            let mut points = values.iter().copied().collect::<Vec<_>>();
+            if let Some(last) = points.last_mut() { *last = chart_displayed.get(); }
             let minimum = points.iter().copied().fold(f64::INFINITY, f64::min);
             let maximum = points.iter().copied().fold(f64::NEG_INFINITY, f64::max);
             let span = (maximum - minimum).max(1.0);
@@ -173,6 +179,25 @@ impl MetricCard {
         frame.set_vexpand(false);
         frame.set_valign(Align::Start);
 
+        // Samples arrive at the configured interval; ease visual values at ~60 FPS.
+        let weak_progress = progress.downgrade();
+        let weak_chart = chart.downgrade();
+        let animated = Rc::clone(&displayed_usage);
+        let target = Rc::clone(&target_usage);
+        gtk::glib::timeout_add_local(Duration::from_millis(16), move || {
+            let (Some(progress), Some(chart)) = (weak_progress.upgrade(), weak_chart.upgrade()) else {
+                return gtk::glib::ControlFlow::Break;
+            };
+            let current = animated.get();
+            let destination = target.get();
+            let difference = destination - current;
+            let next = if difference.abs() < 0.05 { destination } else { current + difference * 0.22 };
+            animated.set(next);
+            progress.set_fraction(next / 100.0);
+            chart.queue_draw();
+            gtk::glib::ControlFlow::Continue
+        });
+
         (
             frame,
             Self {
@@ -190,7 +215,7 @@ impl MetricCard {
         if let Some(value) = value.filter(|value| value.is_finite()) {
             self.chart.set_visible(true);
             let value = value.clamp(0.0, 100.0);
-            self.progress.set_fraction(value / 100.0);
+            self.target_usage.set(value);
             let mut history = self.history.borrow_mut();
             if history.len() == 60 {
                 history.pop_front();
@@ -199,6 +224,8 @@ impl MetricCard {
             drop(history);
             self.chart.queue_draw();
         } else {
+            self.target_usage.set(0.0);
+            self.displayed_usage.set(0.0);
             self.progress.set_fraction(0.0);
             self.chart.set_visible(false);
         }
@@ -338,6 +365,8 @@ fn downgrade_card(card: MetricCard) -> WeakMetricCard {
         progress: card.progress.downgrade(),
         chart: card.chart.downgrade(),
         history: Rc::clone(&card.history),
+        displayed_usage: Rc::clone(&card.displayed_usage),
+        target_usage: Rc::clone(&card.target_usage),
         details: card.details.downgrade(),
     }
 }
@@ -348,6 +377,8 @@ struct WeakMetricCard {
     progress: gtk::glib::WeakRef<gtk::ProgressBar>,
     chart: gtk::glib::WeakRef<gtk::DrawingArea>,
     history: Rc<RefCell<VecDeque<f64>>>,
+    displayed_usage: Rc<Cell<f64>>,
+    target_usage: Rc<Cell<f64>>,
     details: gtk::glib::WeakRef<gtk::Label>,
 }
 
@@ -358,6 +389,8 @@ fn upgrade_card(card: &WeakMetricCard) -> Option<MetricCard> {
         progress: card.progress.upgrade()?,
         chart: card.chart.upgrade()?,
         history: Rc::clone(&card.history),
+        displayed_usage: Rc::clone(&card.displayed_usage),
+        target_usage: Rc::clone(&card.target_usage),
         details: card.details.upgrade()?,
     })
 }
