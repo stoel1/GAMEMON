@@ -20,7 +20,8 @@ The Rust application is the primary development target. The former Bash monitor 
 - [x] NVIDIA `nvidia-smi` fallback when NVML cannot initialize.
 - [ ] GPU PCIe link data and per-process GPU telemetry.
 - [ ] AMD and Intel GPU telemetry through supported DRM interfaces.
-- [ ] Storage and NVMe telemetry.
+- [x] Mounted filesystem capacity and block-device read/write throughput from procfs/statvfs.
+- [ ] NVMe health, temperature, wear and SMART telemetry.
 - [x] Network interface status/counters, throughput rates, errors and drops.
 - [x] Dynamic hwmon temperature and fan RPM discovery when exported by the kernel.
 - [ ] PCIe, USB, audio and display inventory.
@@ -29,12 +30,15 @@ The Rust application is the primary development target. The former Bash monitor 
 - [x] One-second default refresh interval.
 - [x] Background sampler and bounded snapshot delivery to keep collector reads off the GTK thread.
 - [x] Configurable sampling interval.
+- [x] Bounded process overview with CPU-time delta and resident memory.
 - [ ] Sensor selection.
 - [x] Eerste metricgerichte dashboard met CPU-, GPU-, geheugen- en netwerkkaarten.
 - [x] Primaire waarden, ondersteunende details en gebruiksindicatoren in de overzichtskaarten.
 - [x] Rolling 60-sample utilization charts for CPU, GPU and memory with autoscaled, labeled axes and time context.
 - [x] System uptime and load average overview panel.
 - [x] Temperature and fan overview panel backed by hwmon.
+- [x] Storage filesystem usage and block I/O overview panel.
+- [x] Per-logical-CPU utilization and frequency overview.
 - [ ] Dashboard verder verfijnen met statusindicatoren, tijdschaal en lege-/foutstatussen.
 - [ ] Afzonderlijke apparaatweergaven en navigatie.
 - [ ] Hardware discovery and hotplug handling.
