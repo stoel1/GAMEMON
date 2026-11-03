@@ -39,10 +39,18 @@ pub fn activate(application: &Application) {
     content.set_margin_start(24);
     content.set_margin_end(24);
     content.append(&title);
-    content.append(&cpu_label);
-    content.append(&gpu_label);
-    content.append(&memory_label);
-    content.append(&network_label);
+
+    let dashboard = gtk::Grid::new();
+    dashboard.set_column_spacing(16);
+    dashboard.set_row_spacing(16);
+    dashboard.set_column_homogeneous(true);
+    dashboard.set_hexpand(true);
+
+    append_dashboard_card(&dashboard, &cpu_label, 0, 0);
+    append_dashboard_card(&dashboard, &gpu_label, 1, 0);
+    append_dashboard_card(&dashboard, &memory_label, 0, 1);
+    append_dashboard_card(&dashboard, &network_label, 1, 1);
+    content.append(&dashboard);
 
     let scrolled = gtk::ScrolledWindow::new();
     scrolled.set_vexpand(true);
@@ -388,4 +396,23 @@ fn format_optional_count(value: Option<u64>) -> String {
     value
         .map(|value| value.to_string())
         .unwrap_or_else(|| "n.b.".to_owned())
+}
+
+
+fn append_dashboard_card(
+    dashboard: &gtk::Grid,
+    content: &gtk::Label,
+    column: i32,
+    row: i32,
+) {
+    let frame = gtk::Frame::new(None);
+    frame.add_css_class("card");
+    frame.set_child(Some(content));
+    frame.set_hexpand(true);
+    frame.set_vexpand(true);
+    content.set_margin_top(16);
+    content.set_margin_bottom(16);
+    content.set_margin_start(16);
+    content.set_margin_end(16);
+    dashboard.attach(&frame, column, row, 1, 1);
 }
