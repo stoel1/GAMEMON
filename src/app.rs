@@ -205,6 +205,8 @@ impl MetricCard {
                 secondary,
                 progress,
                 history,
+                displayed_usage,
+                target_usage,
                 chart,
                 details,
             },
