@@ -12,6 +12,7 @@ adw = { package = "libadwaita", version = "0.7", features = ["v1_5"] }
 gtk = { package = "gtk4", version = "0.9", features = ["v4_14"] }
 anyhow = "1"
 thiserror = "2"
+libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 tracing = "0.1"
