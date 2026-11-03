@@ -113,7 +113,7 @@ mod tests {
         let stat = "42 (worker (render)) R 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24";
         let parsed = parse_process_stat(stat).unwrap();
         assert_eq!(parsed.name, "worker (render)");
-        assert_eq!(parsed.cpu_ticks, 25);
+        assert_eq!(parsed.cpu_ticks, 23);
     }
 
     #[test]
