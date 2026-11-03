@@ -381,23 +381,25 @@ fn render_snapshot(
     let package_power = power_by_domain.iter()
         .map(|(name, watts)| format!("{name}: {watts:.1} W"))
         .collect::<Vec<_>>();
+    let core_lines = cpu.logical_cpus.iter().take(32).map(|core| {
+        let (percent, usage) = match core.utilization {
+            cpu::CpuUtilization::Available(value) => {
+                let filled = ((value.clamp(0.0, 100.0) / 100.0) * 10.0).round() as usize;
+                (format!("{value:4.1}%"), format!("{}{}", "▰".repeat(filled), "▱".repeat(10 - filled)))
+            }
+            cpu::CpuUtilization::WarmingUp => ("meten".to_owned(), "··········".to_owned()),
+            cpu::CpuUtilization::Unavailable => ("N/B".to_owned(), "──────────".to_owned()),
+        };
+        format!("CPU{:02}  {:>5}  {}  {}", core.id, percent, usage,
+            core.current_frequency_hz.map(|hz| format!("{:.0} MHz", hz as f64 / 1_000_000.0)).unwrap_or_else(|| "klok N/B".to_owned()))
+    }).collect::<Vec<_>>();
     cpu_card.details.set_text(&format!(
-        "{} logische CPU's · Gemiddelde gerapporteerde klok: {}\nPakketvermogen: {}",
+        "{} logische CPU's · Gemiddelde klok: {}\nPakketvermogen: {}\n\nPer-logische CPU\n{}",
         cpu.logical_cpus.len(),
         average_frequency,
-        if package_power.is_empty() { "Niet beschikbaar".to_owned() } else { package_power.join(" · ") }
+        if package_power.is_empty() { "Niet beschikbaar".to_owned() } else { package_power.join(" · ") },
+        if core_lines.is_empty() { "Niet beschikbaar".to_owned() } else { core_lines.join("\n") }
     ));
-    let core_lines = cpu.logical_cpus.iter().take(16).map(|core| {
-        let usage = match core.utilization {
-            cpu::CpuUtilization::Available(value) => format!("{value:4.1}%"),
-            cpu::CpuUtilization::WarmingUp => " meten".to_owned(),
-            cpu::CpuUtilization::Unavailable => " N/B".to_owned(),
-        };
-        format!("CPU{:02}  {}  {}", core.id, usage, core.current_frequency_hz.map(|hz| format!("{:.0} MHz", hz as f64 / 1_000_000.0)).unwrap_or_else(|| "klok N/B".to_owned()))
-    }).collect::<Vec<_>>();
-    if !core_lines.is_empty() {
-        cpu_card.details.set_text(&format!("{}\n{}", cpu_card.details.text(), core_lines.join("\n")));
-    }
 
     match &snapshot.gpu {
         Some(gpu) if !gpu.devices.is_empty() => {
