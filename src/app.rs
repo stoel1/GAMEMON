@@ -68,7 +68,7 @@ impl MetricCard {
         let chart_displayed = Rc::clone(&displayed_usage);
         chart.set_draw_func(move |_, context, width, height| {
             let values = chart_history.borrow();
-            if values.len() < 2 || width <= 1 || height <= 1 {
+            if values.is_empty() || width <= 1 || height <= 1 {
                 return;
             }
 
@@ -114,7 +114,10 @@ impl MetricCard {
             }
 
             let coordinates = points.iter().enumerate().map(|(index, value)| {
-                let x = left + index as f64 / (points.len() - 1) as f64 * plot_width;
+                // Use the full 60-sample time window even while it is filling.
+                // This makes the trace grow from left to right instead of stretching
+                // the first two samples across the entire chart.
+                let x = left + index as f64 / 59.0 * plot_width;
                 let normalized = ((*value).clamp(scale_min, scale_max) - scale_min) / scale_span;
                 let y = bottom - normalized * plot_height;
                 (x, y)
@@ -981,7 +984,7 @@ fn make_detail_chart() -> (gtk::DrawingArea, Rc<RefCell<VecDeque<f64>>>) {
     chart.set_draw_func(move |_, context, width, height| {
         if width < 2 || height < 2 { return; }
         let points = values.borrow();
-        if points.len() < 2 { return; }
+        if points.is_empty() { return; }
         let left = 12.0;
         let right = f64::from(width) - 12.0;
         let top = 12.0;
@@ -1001,7 +1004,8 @@ fn make_detail_chart() -> (gtk::DrawingArea, Rc<RefCell<VecDeque<f64>>>) {
             let _ = context.stroke();
         }
         let coords = points.iter().enumerate().map(|(i,v)| {
-            let x = left + i as f64 / (points.len()-1) as f64 * (right-left);
+            // Keep a fixed 60-sample horizontal scale while history accumulates.
+            let x = left + i as f64 / 59.0 * (right-left);
             let y = bottom - ((*v-low)/span) * (bottom-top);
             (x,y)
         }).collect::<Vec<_>>();
