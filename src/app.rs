@@ -522,7 +522,7 @@ struct WeakMetricCard {
     history: Rc<RefCell<VecDeque<f64>>>,
     displayed_usage: Rc<Cell<f64>>,
     target_usage: Rc<Cell<f64>>,
-    details: gtk::glib::WeakRef<gtk::Label>,
+    details: gtk::glib::WeakRef<gtk::Box>,
 }
 
 fn upgrade_card(card: &WeakMetricCard) -> Option<MetricCard> {
