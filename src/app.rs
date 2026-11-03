@@ -417,22 +417,6 @@ pub fn activate(application: &Application) {
     menu_button.set_popover(Some(&popover));
     let header = HeaderBar::new();
     header.pack_start(&menu_button);
-    if let Some(history) = history_store.clone() {
-        let export_button = gtk::Button::with_label("Exporteer CSV");
-        export_button.set_tooltip_text(Some("Kopieer de meetgeschiedenis naar Downloads"));
-        export_button.connect_clicked(move |_| {
-            let destination = std::env::var_os("HOME")
-                .map(std::path::PathBuf::from)
-                .map(|home| home.join("Downloads/gamemon-history.csv"));
-            if let Some(destination) = destination {
-                match history.export_csv(&destination) {
-                    Ok(_) => tracing::info!(path = %destination.display(), "monitoring history exported"),
-                    Err(error) => tracing::warn!(%error, "could not export monitoring history"),
-                }
-            }
-        });
-        header.pack_end(&export_button);
-    }
     let toolbar = ToolbarView::new();
     toolbar.add_top_bar(&header);
     toolbar.set_content(Some(&stack));
@@ -449,6 +433,23 @@ pub fn activate(application: &Application) {
         interval: config.refresh_interval(),
     });
     let history_store = crate::core::history::HistoryStore::new().map(Rc::new);
+    if let Some(history) = history_store.clone() {
+        let export_button = gtk::Button::with_label("Exporteer CSV");
+        export_button.set_tooltip_text(Some("Kopieer de meetgeschiedenis naar Downloads"));
+        export_button.connect_clicked(move |_| {
+            let destination = std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .map(|home| home.join("Downloads/gamemon-history.csv"));
+            if let Some(destination) = destination {
+                match history.export_csv(&destination) {
+                    Ok(_) => tracing::info!(path = %destination.display(), "monitoring history exported"),
+                    Err(error) => tracing::warn!(%error, "could not export monitoring history"),
+                }
+            }
+        });
+        header.pack_end(&export_button);
+    }
+
 
     let cpu_card = downgrade_card(cpu_card);
     let gpu_card = downgrade_card(gpu_card);
