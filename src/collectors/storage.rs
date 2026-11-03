@@ -145,7 +145,7 @@ mod tests {
         let second = "8 0 sda 12 0 120 1 24 0 240 2 0 0 0";
         let rows = parse_diskstats(second, &mut previous, now + std::time::Duration::from_secs(2));
         assert_eq!(rows[0].read_bytes_per_second, Some(5120.0));
-        assert_eq!(rows[0].write_bytes_per_second, Some(5120.0));
+        assert_eq!(rows[0].write_bytes_per_second, Some(10240.0));
     }
 
     #[test]
