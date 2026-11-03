@@ -381,6 +381,32 @@ pub fn activate(application: &Application) {
         chart_card.set_child(Some(&chart_content));
         page.append(&chart_card);
         detail_charts.insert(key.to_owned(), (chart, history));
+
+        // CPU hybrid-core and GPU telemetry get independent trend panels.
+        let extra_charts: &[(&str, &str)] = match key {
+            "cpu" => &[("cpu_p", "Prestatiekernen (P-cores) · gebruik"), ("cpu_e", "Efficiëntiekernen (E-cores) · gebruik")],
+            "gpu" => &[("gpu_power", "GPU-vermogen · watt"), ("gpu_vram", "VRAM-gebruik · GiB")],
+            _ => &[],
+        };
+        for (series_key, series_title) in extra_charts {
+            let (series_chart, series_history) = make_detail_chart();
+            let series_card = gtk::Frame::new(None);
+            series_card.add_css_class("card");
+            let series_content = gtk::Box::new(Orientation::Vertical, 6);
+            series_content.set_margin_top(12);
+            series_content.set_margin_bottom(12);
+            series_content.set_margin_start(12);
+            series_content.set_margin_end(12);
+            let series_heading = gtk::Label::new(Some(series_title));
+            series_heading.set_halign(Align::Start);
+            series_heading.add_css_class("heading");
+            series_heading.add_css_class("dim-label");
+            series_content.append(&series_heading);
+            series_content.append(&series_chart);
+            series_card.set_child(Some(&series_content));
+            page.append(&series_card);
+            detail_charts.insert((*series_key).to_owned(), (series_chart, series_history));
+        }
         let loading = gtk::Label::new(Some("Gegevens worden verzameld…"));
         loading.set_halign(Align::Start);
         loading.add_css_class("dim-label");
@@ -565,6 +591,15 @@ fn render_snapshot(
     let cpu = &snapshot.cpu;
     let cpu_usage = cpu_utilization_value(cpu.utilization);
     push_detail_sample(detail_charts, "cpu", cpu_usage);
+    let average_core_usage = |core_type: u32| -> Option<f64> {
+        let values = cpu.logical_cpus.iter().filter(|core| core.core_type == Some(core_type))
+            .filter_map(|core| match core.utilization { cpu::CpuUtilization::Available(value) => Some(value), _ => None })
+            .collect::<Vec<_>>();
+        (!values.is_empty()).then(|| values.iter().sum::<f64>() / values.len() as f64)
+    };
+    // Linux topology core_type: 2 = Core/P-core, 1 = Atom/E-core.
+    push_detail_sample(detail_charts, "cpu_p", average_core_usage(2));
+    push_detail_sample(detail_charts, "cpu_e", average_core_usage(1));
     cpu_card.primary.set_text(&format_cpu_utilization(cpu.utilization));
     cpu_card.set_usage(cpu_usage);
     cpu_card.secondary.set_text(cpu.model.as_deref().unwrap_or("CPU-model niet beschikbaar"));
@@ -593,6 +628,8 @@ fn render_snapshot(
             let name = device.model.as_deref().unwrap_or("GPU-model niet beschikbaar");
             let usage = device.gpu_busy_percent.map(f64::from);
             push_detail_sample(detail_charts, "gpu", usage);
+            push_detail_sample(detail_charts, "gpu_power", device.power_milliwatts.map(|value| value as f64 / 1000.0));
+            push_detail_sample(detail_charts, "gpu_vram", device.vram_used_bytes.map(|value| value as f64 / 1_073_741_824.0));
             gpu_card.primary.set_text(&usage.map(|value| format!("{value:.0}%")).unwrap_or_else(|| "N/B".to_owned()));
             gpu_card.set_usage(usage);
             gpu_card.secondary.set_text(name);
