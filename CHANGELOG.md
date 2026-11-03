@@ -25,6 +25,8 @@ The Rust migration is not a stable release. The archived Bash implementation rem
 
 ## Unreleased – Rust dashboard
 
-- Replaced the initial vertical telemetry list with a two-column, card-based overview for CPU, GPU, memory and network data.
+- Reworked the overview into four metric-focused cards for CPU, GPU, memory and network telemetry.
+- Promoted primary values (CPU/GPU utilization, RAM percentage and network throughput) and kept supporting readings in compact detail sections.
+- Added utilization progress indicators and expanded the default window to give the dashboard more room.
 - Kept telemetry collection in the background sampler and GTK updates on the main thread.
-- This is an initial dashboard layout; dedicated device pages, charts and responsive navigation remain planned.
+- This remains the first dashboard pass; time-series charts, dedicated device pages and navigation remain planned.
