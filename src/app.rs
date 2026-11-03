@@ -1,4 +1,4 @@
-use std::{sync::mpsc::TryRecvError, time::Duration};
+use std::{cell::RefCell, collections::VecDeque, sync::mpsc::TryRecvError, time::Duration};
 
 use adw::prelude::*;
 use adw::{Application, ApplicationWindow, HeaderBar, ToolbarView};
@@ -13,44 +13,122 @@ use crate::{
 };
 
 const UI_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const HISTORY_POINTS: usize = 60;
+
+struct MetricCard {
+    primary: gtk::Label,
+    secondary: gtk::Label,
+    progress: gtk::ProgressBar,
+    details: gtk::Label,
+}
+
+impl MetricCard {
+    fn new(title: &str, subtitle: &str) -> (gtk::Frame, Self) {
+        let container = gtk::Box::new(Orientation::Vertical, 10);
+        container.set_margin_top(18);
+        container.set_margin_bottom(18);
+        container.set_margin_start(18);
+        container.set_margin_end(18);
+
+        let heading = gtk::Label::new(Some(title));
+        heading.set_halign(Align::Start);
+        heading.add_css_class("heading");
+        heading.add_css_class("dim-label");
+
+        let primary = gtk::Label::new(Some("Meten…"));
+        primary.set_halign(Align::Start);
+        primary.add_css_class("title-1");
+        primary.add_css_class("numeric");
+
+        let secondary = gtk::Label::new(Some(subtitle));
+        secondary.set_halign(Align::Start);
+        secondary.add_css_class("dim-label");
+        secondary.set_wrap(true);
+
+        let progress = gtk::ProgressBar::new();
+        progress.set_show_text(false);
+        progress.set_fraction(0.0);
+        progress.add_css_class("osd");
+
+        let details = gtk::Label::new(Some("Gegevens worden verzameld…"));
+        details.set_halign(Align::Start);
+        details.set_valign(Align::Start);
+        details.set_wrap(true);
+        details.set_selectable(true);
+        details.add_css_class("dim-label");
+
+        container.append(&heading);
+        container.append(&primary);
+        container.append(&secondary);
+        container.append(&progress);
+        container.append(&details);
+
+        let frame = gtk::Frame::new(None);
+        frame.add_css_class("card");
+        frame.set_child(Some(&container));
+        frame.set_hexpand(true);
+        frame.set_vexpand(true);
+
+        (
+            frame,
+            Self {
+                primary,
+                secondary,
+                progress,
+                details,
+            },
+        )
+    }
+
+    fn set_usage(&self, value: Option<f64>) {
+        if let Some(value) = value.filter(|value| value.is_finite()) {
+            self.progress.set_fraction((value / 100.0).clamp(0.0, 1.0));
+        } else {
+            self.progress.set_fraction(0.0);
+        }
+    }
+}
 
 pub fn activate(application: &Application) {
-    let title = gtk::Label::builder()
-        .label("GAMEMON")
-        .halign(Align::Start)
-        .css_classes(["title-1"])
-        .build();
-    let cpu_label = gtk::Label::new(Some("CPU\nMeten…"));
-    cpu_label.set_halign(Align::Start);
-    cpu_label.set_selectable(true);
-    let gpu_label = gtk::Label::new(Some("GPU\nDetecteren…"));
-    gpu_label.set_halign(Align::Start);
-    gpu_label.set_selectable(true);
-    let memory_label = gtk::Label::new(Some("Geheugen\nMeten…"));
-    memory_label.set_halign(Align::Start);
-    memory_label.set_selectable(true);
-    let network_label = gtk::Label::new(Some("Netwerk\nMeten…"));
-    network_label.set_halign(Align::Start);
-    network_label.set_selectable(true);
+    let (cpu_frame, cpu_card) = MetricCard::new("PROCESSOR", "Totale processorbelasting");
+    let (gpu_frame, gpu_card) = MetricCard::new("GRAPHICS", "Grafische processor");
+    let (memory_frame, memory_card) = MetricCard::new("GEHEUGEN", "RAM-gebruik");
+    let (network_frame, network_card) = MetricCard::new("NETWERK", "Actuele netwerkdoorvoer");
 
-    let content = gtk::Box::new(Orientation::Vertical, 12);
+    let content = gtk::Box::new(Orientation::Vertical, 18);
     content.set_margin_top(24);
     content.set_margin_bottom(24);
     content.set_margin_start(24);
     content.set_margin_end(24);
-    content.append(&title);
 
-    let dashboard = gtk::Grid::new();
-    dashboard.set_column_spacing(16);
-    dashboard.set_row_spacing(16);
-    dashboard.set_column_homogeneous(true);
-    dashboard.set_hexpand(true);
+    let intro = gtk::Box::new(Orientation::Vertical, 4);
+    let title = gtk::Label::new(Some("GAMEMON"));
+    title.set_halign(Align::Start);
+    title.add_css_class("title-1");
+    let subtitle = gtk::Label::new(Some("Hardwareoverzicht · live systeemtelemetrie"));
+    subtitle.set_halign(Align::Start);
+    subtitle.add_css_class("dim-label");
+    intro.append(&title);
+    intro.append(&subtitle);
+    content.append(&intro);
 
-    append_dashboard_card(&dashboard, &cpu_label, 0, 0);
-    append_dashboard_card(&dashboard, &gpu_label, 1, 0);
-    append_dashboard_card(&dashboard, &memory_label, 0, 1);
-    append_dashboard_card(&dashboard, &network_label, 1, 1);
-    content.append(&dashboard);
+    let grid = gtk::Grid::new();
+    grid.set_column_spacing(16);
+    grid.set_row_spacing(16);
+    grid.set_column_homogeneous(true);
+    grid.set_hexpand(true);
+    grid.attach(&cpu_frame, 0, 0, 1, 1);
+    grid.attach(&gpu_frame, 1, 0, 1, 1);
+    grid.attach(&memory_frame, 0, 1, 1, 1);
+    grid.attach(&network_frame, 1, 1, 1, 1);
+    content.append(&grid);
+
+    let footer = gtk::Label::new(Some("Gegevens worden lokaal gelezen via Linux procfs, sysfs en ondersteunde driverinterfaces."));
+    footer.set_halign(Align::Start);
+    footer.set_wrap(true);
+    footer.add_css_class("dim-label");
+    footer.add_css_class("caption");
+    content.append(&footer);
 
     let scrolled = gtk::ScrolledWindow::new();
     scrolled.set_vexpand(true);
@@ -62,8 +140,8 @@ pub fn activate(application: &Application) {
     let window = ApplicationWindow::builder()
         .application(application)
         .title("GAMEMON")
-        .default_width(900)
-        .default_height(650)
+        .default_width(1080)
+        .default_height(760)
         .content(&toolbar)
         .build();
 
@@ -71,16 +149,18 @@ pub fn activate(application: &Application) {
     let receiver = sampler::start(SamplerConfig {
         interval: config.refresh_interval(),
     });
-    let cpu_label = cpu_label.downgrade();
-    let gpu_label = gpu_label.downgrade();
-    let memory_label = memory_label.downgrade();
-    let network_label = network_label.downgrade();
+
+    let cpu_card = downgrade_card(cpu_card);
+    let gpu_card = downgrade_card(gpu_card);
+    let memory_card = downgrade_card(memory_card);
+    let network_card = downgrade_card(network_card);
+
     gtk::glib::timeout_add_local(UI_POLL_INTERVAL, move || {
-        let (Some(cpu_label), Some(gpu_label), Some(memory_label), Some(network_label)) = (
-            cpu_label.upgrade(),
-            gpu_label.upgrade(),
-            memory_label.upgrade(),
-            network_label.upgrade(),
+        let (Some(cpu_card), Some(gpu_card), Some(memory_card), Some(network_card)) = (
+            upgrade_card(&cpu_card),
+            upgrade_card(&gpu_card),
+            upgrade_card(&memory_card),
+            upgrade_card(&network_card),
         ) else {
             return gtk::glib::ControlFlow::Break;
         };
@@ -91,22 +171,16 @@ pub fn activate(application: &Application) {
                 Ok(snapshot) => latest = Some(snapshot),
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
-                    cpu_label.set_text("CPU\nSampling niet beschikbaar");
-                    gpu_label.set_text("GPU\nSampling niet beschikbaar");
-                    memory_label.set_text("Geheugen\nSampling niet beschikbaar");
-                    network_label.set_text("Netwerk\nSampling niet beschikbaar");
+                    cpu_card.primary.set_text("Niet beschikbaar");
+                    gpu_card.primary.set_text("Niet beschikbaar");
+                    memory_card.primary.set_text("Niet beschikbaar");
+                    network_card.primary.set_text("Niet beschikbaar");
                     return gtk::glib::ControlFlow::Break;
                 }
             }
         }
         if let Some(snapshot) = latest {
-            render_snapshot(
-                &snapshot,
-                &cpu_label,
-                &gpu_label,
-                &memory_label,
-                &network_label,
-            );
+            render_snapshot(&snapshot, &cpu_card, &gpu_card, &memory_card, &network_card);
         }
         gtk::glib::ControlFlow::Continue
     });
@@ -114,305 +188,180 @@ pub fn activate(application: &Application) {
     window.present();
 }
 
+// Weak references prevent the sampling timer from keeping closed windows alive.
+fn downgrade_card(card: MetricCard) -> WeakMetricCard {
+    WeakMetricCard {
+        primary: card.primary.downgrade(),
+        secondary: card.secondary.downgrade(),
+        progress: card.progress.downgrade(),
+        details: card.details.downgrade(),
+    }
+}
+
+struct WeakMetricCard {
+    primary: gtk::glib::WeakRef<gtk::Label>,
+    secondary: gtk::glib::WeakRef<gtk::Label>,
+    progress: gtk::glib::WeakRef<gtk::ProgressBar>,
+    details: gtk::glib::WeakRef<gtk::Label>,
+}
+
+fn upgrade_card(card: &WeakMetricCard) -> Option<MetricCard> {
+    Some(MetricCard {
+        primary: card.primary.upgrade()?,
+        secondary: card.secondary.upgrade()?,
+        progress: card.progress.upgrade()?,
+        details: card.details.upgrade()?,
+    })
+}
+
 fn render_snapshot(
     snapshot: &MonitorSnapshot,
-    cpu_label: &gtk::Label,
-    gpu_label: &gtk::Label,
-    memory_label: &gtk::Label,
-    network_label: &gtk::Label,
+    cpu_card: &MetricCard,
+    gpu_card: &MetricCard,
+    memory_card: &MetricCard,
+    network_card: &MetricCard,
 ) {
     let cpu = &snapshot.cpu;
-    let model = cpu.model.as_deref().unwrap_or("Niet beschikbaar");
-    let online = cpu.online.as_deref().unwrap_or("Niet beschikbaar");
-    let utilization = format_cpu_utilization(cpu.utilization);
-    let logical_cpu_lines = cpu
-        .logical_cpus
-        .iter()
-        .map(|logical_cpu| {
-            let package = logical_cpu
-                .package_id
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "?".to_owned());
-            let core = logical_cpu
-                .core_id
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "?".to_owned());
-            let frequency = logical_cpu
-                .current_frequency_hz
-                .map(|value| format!("reported {:.0} MHz", value as f64 / 1_000_000.0))
-                .unwrap_or_else(|| "reported frequency n.b.".to_owned());
-            format!(
-                "CPU{}: {} · {} · package {} · core {}",
-                logical_cpu.id,
-                format_cpu_utilization(logical_cpu.utilization),
-                frequency,
-                package,
-                core
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let logical_cpu_lines = if logical_cpu_lines.is_empty() {
-        "Per-logical-CPU details: Niet beschikbaar".to_owned()
-    } else {
-        logical_cpu_lines
-    };
-    let package_power = if cpu.package_power_domains.is_empty() {
-        "Niet beschikbaar".to_owned()
-    } else {
-        cpu.package_power_domains
-            .iter()
-            .map(|domain| {
-                let power = domain
-                    .power_watts
-                    .map(|value| format!("{value:.1} W"))
-                    .unwrap_or_else(|| "Niet beschikbaar".to_owned());
-                format!("{}: {power}", domain.name)
-            })
-            .collect::<Vec<_>>()
-            .join(" · ")
-    };
-    cpu_label.set_text(&format!(
-        "CPU\n{model}\nOnline logical CPU's: {online}\nTotaal gebruik: {utilization}\nCPU-packagevermogen: {package_power}\n{logical_cpu_lines}"
+    let cpu_usage = cpu_utilization_value(cpu.utilization);
+    cpu_card.primary.set_text(&format_cpu_utilization(cpu.utilization));
+    cpu_card.set_usage(cpu_usage);
+    cpu_card.secondary.set_text(cpu.model.as_deref().unwrap_or("CPU-model niet beschikbaar"));
+    let average_frequency = average_cpu_frequency(cpu);
+    let package_power = cpu.package_power_domains.iter()
+        .filter_map(|domain| domain.power_watts.map(|watts| format!("{}: {watts:.1} W", domain.name)))
+        .collect::<Vec<_>>();
+    cpu_card.details.set_text(&format!(
+        "{} logische CPU's · Gemiddelde gerapporteerde klok: {}\nPakketvermogen: {}",
+        cpu.logical_cpus.len(),
+        average_frequency,
+        if package_power.is_empty() { "Niet beschikbaar".to_owned() } else { package_power.join(" · ") }
     ));
 
-    let gpu_text = match &snapshot.gpu {
-        None => "GPU\nNiet beschikbaar".to_owned(),
-        Some(snapshot) if snapshot.devices.is_empty() => {
-            "GPU\nGeen DRM-apparaten gevonden".to_owned()
+    match &snapshot.gpu {
+        Some(gpu) if !gpu.devices.is_empty() => {
+            let device = &gpu.devices[0];
+            let name = device.model.as_deref().unwrap_or("GPU-model niet beschikbaar");
+            let usage = device.gpu_busy_percent.map(f64::from);
+            gpu_card.primary.set_text(&usage.map(|value| format!("{value:.0}%")).unwrap_or_else(|| "N/B".to_owned()));
+            gpu_card.set_usage(usage);
+            gpu_card.secondary.set_text(name);
+            let vram = match (device.vram_used_bytes, device.vram_total_bytes) {
+                (Some(used), Some(total)) => format!("VRAM {} / {}", format_bytes(used), format_bytes(total)),
+                _ => "VRAM niet beschikbaar".to_owned(),
+            };
+            let temperature = device.temperature_celsius.map(|value| format!("{value} °C")).unwrap_or_else(|| "N/B".to_owned());
+            let power = device.power_milliwatts.map(|value| format!("{:.1} W", value as f64 / 1000.0)).unwrap_or_else(|| "N/B".to_owned());
+            let clocks = device.graphics_clock_mhz.map(|value| format!("{value} MHz")).unwrap_or_else(|| "N/B".to_owned());
+            gpu_card.details.set_text(&format!("Temperatuur: {temperature} · Vermogen: {power}\n{vram} · Core clock: {clocks}\n{} GPU(s) gedetecteerd", gpu.devices.len()));
         }
-        Some(snapshot) => format!(
-            "GPU\n{}",
-            snapshot
-                .devices
-                .iter()
-                .map(format_gpu_device)
-                .collect::<Vec<_>>()
-                .join("\n")
-        ),
-    };
-    gpu_label.set_text(&gpu_text);
+        Some(_) => {
+            gpu_card.primary.set_text("Geen GPU");
+            gpu_card.secondary.set_text("Geen grafische apparaten gevonden");
+            gpu_card.details.set_text("Controleer of de kernel DRM-apparaten beschikbaar stelt.");
+            gpu_card.set_usage(None);
+        }
+        None => {
+            gpu_card.primary.set_text("N/B");
+            gpu_card.secondary.set_text("GPU-telemetrie niet beschikbaar");
+            gpu_card.details.set_text("Er kon geen GPU-informatie worden verzameld.");
+            gpu_card.set_usage(None);
+        }
+    }
 
     let memory = snapshot.memory;
-    let memory_text = format!(
-        "Geheugen\nRAM gebruikt: {} / {}\nBeschikbaar: {} · Vrij: {}\nBuffers: {} · Cache: {}\nSwap gebruikt: {} / {} (vrij {})\nHugePages: {}\nMemory PSI: {}",
-        format_optional_bytes(memory.used_bytes()),
-        format_optional_bytes(memory.total_bytes),
-        format_optional_bytes(memory.available_bytes),
-        format_optional_bytes(memory.free_bytes),
-        format_optional_bytes(memory.buffers_bytes),
-        format_optional_bytes(memory.cached_bytes),
-        format_optional_bytes(memory.swap_used_bytes()),
-        format_optional_bytes(memory.swap_total_bytes),
-        format_optional_bytes(memory.swap_free_bytes),
-        format_hugepages(memory),
-        format_memory_pressure(memory.pressure),
-    );
-    memory_label.set_text(&memory_text);
+    let used = memory.used_bytes();
+    let total = memory.total_bytes;
+    let memory_percent = match (used, total.filter(|value| *value > 0)) {
+        (Some(used), Some(total)) => Some((used as f64 / total as f64) * 100.0),
+        _ => None,
+    };
+    memory_card.primary.set_text(&memory_percent.map(|value| format!("{value:.1}%")).unwrap_or_else(|| "N/B".to_owned()));
+    memory_card.set_usage(memory_percent);
+    memory_card.secondary.set_text(&format!(
+        "{} gebruikt van {}",
+        used.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        total.map(format_bytes).unwrap_or_else(|| "N/B".to_owned())
+    ));
+    let swap = match (memory.swap_used_bytes(), memory.swap_total_bytes) {
+        (Some(used), Some(total)) => format!("Swap: {} / {}", format_bytes(used), format_bytes(total)),
+        _ => "Swap: N/B".to_owned(),
+    };
+    memory_card.details.set_text(&format!(
+        "Beschikbaar: {} · Vrij: {}\n{}",
+        memory.available_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        memory.free_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
+        swap
+    ));
 
-    let network_text = match &snapshot.network {
-        None => "Netwerk\nNiet beschikbaar".to_owned(),
-        Some(snapshot) if snapshot.interfaces.is_empty() => {
-            "Netwerk\nGeen interfaces gevonden".to_owned()
+    match &snapshot.network {
+        Some(network) if !network.interfaces.is_empty() => {
+            let active = network.interfaces.iter().filter(|interface| interface.carrier == Some(true) || interface.operational_state.as_deref() == Some("up")).collect::<Vec<_>>();
+            let rx = active.iter().filter_map(|interface| interface.rx_bytes_per_second).sum::<f64>();
+            let tx = active.iter().filter_map(|interface| interface.tx_bytes_per_second).sum::<f64>();
+            network_card.primary.set_text(&format!("↓ {}  ↑ {}", format_rate(rx), format_rate(tx)));
+            network_card.secondary.set_text(&format!("{} interfaces · {} actief", network.interfaces.len(), active.len()));
+            network_card.details.set_text(&active.iter().map(|interface| {
+                format!("{} · ↓ {} · ↑ {}", interface.name, format_rate(interface.rx_bytes_per_second.unwrap_or(0.0)), format_rate(interface.tx_bytes_per_second.unwrap_or(0.0)))
+            }).collect::<Vec<_>>().join("\n"));
+            network_card.set_usage(None);
         }
-        Some(snapshot) => format!(
-            "Netwerk\n{}",
-            snapshot
-                .interfaces
-                .iter()
-                .map(format_network_interface)
-                .collect::<Vec<_>>()
-                .join("\n")
-        ),
-    };
-    network_label.set_text(&network_text);
+        Some(_) => {
+            network_card.primary.set_text("Geen interfaces");
+            network_card.secondary.set_text("Geen netwerkinterfaces gevonden");
+            network_card.details.set_text("Netwerkdetails zijn niet beschikbaar.");
+            network_card.set_usage(None);
+        }
+        None => {
+            network_card.primary.set_text("N/B");
+            network_card.secondary.set_text("Netwerktelemetrie niet beschikbaar");
+            network_card.details.set_text("Er kon geen netwerk-informatie worden verzameld.");
+            network_card.set_usage(None);
+        }
+    }
 }
 
-fn format_gpu_device(device: &gpu::GpuDeviceSnapshot) -> String {
-    let name = device
-        .model
-        .as_deref()
-        .map(str::to_owned)
-        .or_else(|| match (device.vendor_id, device.device_id) {
-            (Some(vendor), Some(product)) => Some(format!("PCI {vendor:#06x}:{product:#06x}")),
-            _ => None,
-        })
-        .unwrap_or_else(|| "GPU-model niet beschikbaar".to_owned());
-    let pci_address = device.pci_address.as_deref().unwrap_or("PCI-adres n.b.");
-    let driver = device.driver.as_deref().unwrap_or("driver n.b.");
-    let source = device
-        .telemetry_source
-        .map(str::to_owned)
-        .or_else(|| device.drm_card.as_deref().map(|card| format!("DRM {card}")))
-        .unwrap_or_else(|| "Bron n.b.".to_owned());
-    let uuid = device.uuid.as_deref().unwrap_or("UUID n.b.");
-    let utilization = device
-        .gpu_busy_percent
-        .map(|value| format!("{value}%"))
-        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
-    let memory_utilization = device
-        .memory_busy_percent
-        .map(|value| format!("{value}%"))
-        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
-    let vram = match (device.vram_used_bytes, device.vram_total_bytes) {
-        (Some(used), Some(total)) => format!(
-            "{} / {}",
-            format_optional_bytes(Some(used)),
-            format_optional_bytes(Some(total))
-        ),
-        _ => "Niet beschikbaar".to_owned(),
-    };
-    let temperature = device
-        .temperature_celsius
-        .map(|value| format!("{value} °C"))
-        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
-    let power = device
-        .power_milliwatts
-        .map(|value| format!("{:.1} W", value as f64 / 1000.0))
-        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
-    let power_limit = device
-        .power_limit_milliwatts
-        .map(|value| format!("{:.1} W", value as f64 / 1000.0))
-        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
-    let graphics_clock = device
-        .graphics_clock_mhz
-        .map(|value| format!("{value} MHz"))
-        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
-    let memory_clock = device
-        .memory_clock_mhz
-        .map(|value| format!("{value} MHz"))
-        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
-    let fan = device
-        .fan_percent
-        .map(|value| format!("{value}%"))
-        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
-    let encoder = device
-        .encoder_busy_percent
-        .map(|value| format!("{value}%"))
-        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
-    let decoder = device
-        .decoder_busy_percent
-        .map(|value| format!("{value}%"))
-        .unwrap_or_else(|| "Niet beschikbaar".to_owned());
-    format!(
-        "{} · {source} · {pci_address} · {driver} · {uuid}\n  Belasting: {utilization} · VRAM: {vram} · VRAM-belasting: {memory_utilization}\n  Temperatuur: {temperature} · vermogen: {power} / limiet {power_limit}\n  Klok: {graphics_clock} · geheugenklok: {memory_clock} · ventilator: {fan}\n  Encoder: {encoder} · decoder: {decoder}",
-        name,
-    )
+fn cpu_utilization_value(value: cpu::CpuUtilization) -> Option<f64> {
+    match value {
+        cpu::CpuUtilization::Available(value) if value.is_finite() => Some(value.clamp(0.0, 100.0)),
+        _ => None,
+    }
 }
 
-fn format_cpu_utilization(utilization: cpu::CpuUtilization) -> String {
-    match utilization {
+fn average_cpu_frequency(cpu: &cpu::CpuSnapshot) -> String {
+    let frequencies = cpu.logical_cpus.iter().filter_map(|core| core.current_frequency_hz).collect::<Vec<_>>();
+    if frequencies.is_empty() {
+        "Niet beschikbaar".to_owned()
+    } else {
+        let average = frequencies.iter().map(|value| *value as f64).sum::<f64>() / frequencies.len() as f64;
+        format!("{:.0} MHz", average / 1_000_000.0)
+    }
+}
+
+fn format_cpu_utilization(value: cpu::CpuUtilization) -> String {
+    match value {
         cpu::CpuUtilization::Available(value) => format!("{value:.1}%"),
         cpu::CpuUtilization::WarmingUp => "Meten…".to_owned(),
-        cpu::CpuUtilization::Unavailable => "Niet beschikbaar".to_owned(),
+        cpu::CpuUtilization::Unavailable => "N/B".to_owned(),
     }
 }
 
-fn format_optional_bytes(value: Option<u64>) -> String {
-    value
-        .map(|bytes| format!("{:.1} GiB", bytes as f64 / 1_073_741_824.0))
-        .unwrap_or_else(|| "Niet beschikbaar".to_owned())
-}
-
-fn format_hugepages(memory: memory::MemorySnapshot) -> String {
-    match (
-        memory.huge_pages_free,
-        memory.huge_pages_total,
-        memory.huge_page_size_bytes,
-    ) {
-        (Some(free), Some(total), Some(size)) => format!(
-            "{free} vrij / {total} totaal ({:.0} MiB per pagina)",
-            size as f64 / 1_048_576.0
-        ),
-        _ => "Niet beschikbaar".to_owned(),
+fn format_bytes(bytes: u64) -> String {
+    const GIB: f64 = 1_073_741_824.0;
+    if bytes >= 1_073_741_824 {
+        format!("{:.1} GiB", bytes as f64 / GIB)
+    } else if bytes >= 1_048_576 {
+        format!("{:.0} MiB", bytes as f64 / 1_048_576.0)
+    } else {
+        format!("{:.0} KiB", bytes as f64 / 1024.0)
     }
 }
 
-fn format_memory_pressure(pressure: Option<memory::MemoryPressure>) -> String {
-    pressure
-        .map(|pressure| {
-            let full = pressure
-                .full
-                .map(|metrics| format!("{:.2}%", metrics.avg10))
-                .unwrap_or_else(|| "Niet beschikbaar".to_owned());
-            format!("some {:.2}% · full {full}", pressure.some.avg10)
-        })
-        .unwrap_or_else(|| "Niet beschikbaar".to_owned())
-}
-
-fn format_network_interface(interface: &network::NetworkInterfaceSnapshot) -> String {
-    let state = interface
-        .operational_state
-        .as_deref()
-        .unwrap_or("state n.b.");
-    let carrier = match interface.carrier {
-        Some(true) => "carrier on",
-        Some(false) => "carrier off",
-        None => "carrier n.b.",
-    };
-    let speed = interface
-        .speed_mbps
-        .map(|value| format!("{value} Mbps"))
-        .unwrap_or_else(|| "speed n.b.".to_owned());
-    let duplex = interface.duplex.as_deref().unwrap_or("duplex n.b.");
-    format!(
-        "{} · {state}, {carrier} · {speed} {duplex}\n  ↓ {} ({} totaal, {} errors, {} drops) · ↑ {} ({} totaal, {} errors, {} drops)",
-        interface.name,
-        format_data_rate(interface.rx_bytes_per_second),
-        format_optional_data_size(interface.rx_bytes),
-        format_optional_count(interface.rx_errors),
-        format_optional_count(interface.rx_dropped),
-        format_data_rate(interface.tx_bytes_per_second),
-        format_optional_data_size(interface.tx_bytes),
-        format_optional_count(interface.tx_errors),
-        format_optional_count(interface.tx_dropped),
-    )
-}
-
-fn format_data_rate(value: Option<f64>) -> String {
-    match value {
-        Some(bytes) if bytes >= 1_048_576.0 => format!("{:.1} MiB/s", bytes / 1_048_576.0),
-        Some(bytes) if bytes >= 1024.0 => format!("{:.1} KiB/s", bytes / 1024.0),
-        Some(bytes) => format!("{bytes:.0} B/s"),
-        None => "Meten…".to_owned(),
+fn format_rate(bytes: f64) -> String {
+    if bytes >= 1_048_576.0 {
+        format!("{:.1} MiB/s", bytes / 1_048_576.0)
+    } else if bytes >= 1024.0 {
+        format!("{:.1} KiB/s", bytes / 1024.0)
+    } else {
+        format!("{bytes:.0} B/s")
     }
-}
-
-fn format_optional_data_size(value: Option<u64>) -> String {
-    match value {
-        Some(bytes) if bytes >= 1_073_741_824 => {
-            format!("{:.1} GiB", bytes as f64 / 1_073_741_824.0)
-        }
-        Some(bytes) if bytes >= 1_048_576 => {
-            format!("{:.1} MiB", bytes as f64 / 1_048_576.0)
-        }
-        Some(bytes) if bytes >= 1024 => format!("{:.1} KiB", bytes as f64 / 1024.0),
-        Some(bytes) => format!("{bytes} B"),
-        None => "n.b.".to_owned(),
-    }
-}
-
-fn format_optional_count(value: Option<u64>) -> String {
-    value
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| "n.b.".to_owned())
-}
-
-
-fn append_dashboard_card(
-    dashboard: &gtk::Grid,
-    content: &gtk::Label,
-    column: i32,
-    row: i32,
-) {
-    let frame = gtk::Frame::new(None);
-    frame.add_css_class("card");
-    frame.set_child(Some(content));
-    frame.set_hexpand(true);
-    frame.set_vexpand(true);
-    content.set_margin_top(16);
-    content.set_margin_bottom(16);
-    content.set_margin_start(16);
-    content.set_margin_end(16);
-    dashboard.attach(&frame, column, row, 1, 1);
 }
