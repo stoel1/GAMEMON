@@ -30,9 +30,10 @@ The Rust application is the primary development target. The former Bash monitor 
 - [x] Background sampler and bounded snapshot delivery to keep collector reads off the GTK thread.
 - [x] Configurable sampling interval.
 - [ ] Sensor selection.
-- [x] Eerste kaartgebaseerde Overview met CPU-, GPU-, geheugen- en netwerkpanelen.
-- [ ] Dashboard en afzonderlijke apparaatweergaven verder uitwerken.
-- [ ] Historical graphs and status presentation.
+- [x] Eerste metricgerichte dashboard met CPU-, GPU-, geheugen- en netwerkkaarten.
+- [x] Primaire waarden, ondersteunende details en gebruiksindicatoren in de overzichtskaarten.
+- [ ] Dashboard verder verfijnen met tijdreeksgrafieken en statusindicatoren.
+- [ ] Afzonderlijke apparaatweergaven en navigatie.
 - [ ] Hardware discovery and hotplug handling.
 - [ ] RHEL 10 RPM packaging and lifecycle tests.
 
