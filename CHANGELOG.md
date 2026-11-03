@@ -34,3 +34,8 @@ The Rust migration is not a stable release. The archived Bash implementation rem
 - Added dynamic hwmon discovery for temperature and fan RPM readings, preserving labels exported by the kernel.
 - Grouped duplicate exported RAPL package labels in the overview so repeated sysfs aliases do not flood the CPU card.
 - This remains an evolving dashboard; dedicated device pages, navigation and richer time-series controls remain planned.
+
+- Added filesystem capacity and Linux block-device read/write throughput from procfs and statvfs.
+- Added a process collector using procfs CPU-time deltas and resident memory, with a bounded top-process list.
+- Added per-logical-CPU live utilization bars and frequency readings to the CPU panel.
+- Added storage and process overview panels to the dashboard.
