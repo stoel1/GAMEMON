@@ -45,7 +45,9 @@ The Rust application is the primary development target. The former Bash monitor 
 - [x] Reduce default information density in CPU, storage and process overview cards.
 - [x] Smooth interpolation of CPU/GPU/memory chart traces and progress indicators between hardware samples.
 - [ ] Dashboard verder verfijnen met statusindicatoren, tijdschaal en lege-/foutstatussen.
-- [ ] Afzonderlijke apparaatweergaven en navigatie.
+- [x] Hardware dropdown and dedicated detail pages for CPU, GPU, memory, motherboard/sensors, storage, network, processes and system.
+- [x] CPU detail view lists every online logical CPU with usage, frequency and topology.
+- [ ] Add richer visual per-core charts and device-specific graphs.
 - [ ] Hardware discovery and hotplug handling.
 - [ ] RHEL 10 RPM packaging and lifecycle tests.
 
