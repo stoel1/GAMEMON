@@ -32,7 +32,7 @@ The Rust application is the primary development target. The former Bash monitor 
 - [ ] Sensor selection.
 - [x] Eerste metricgerichte dashboard met CPU-, GPU-, geheugen- en netwerkkaarten.
 - [x] Primaire waarden, ondersteunende details en gebruiksindicatoren in de overzichtskaarten.
-- [x] Rolling 60-sample utilization sparklines for CPU, GPU and memory.
+- [x] Rolling 60-sample utilization charts for CPU, GPU and memory with autoscaled, labeled axes and time context.
 - [x] System uptime and load average overview panel.
 - [x] Temperature and fan overview panel backed by hwmon.
 - [ ] Dashboard verder verfijnen met statusindicatoren, tijdschaal en lege-/foutstatussen.
