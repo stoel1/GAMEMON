@@ -29,7 +29,7 @@ The Rust migration is not a stable release. The archived Bash implementation rem
 - Promoted primary values (CPU/GPU utilization, RAM percentage and network throughput) and kept supporting readings in compact detail sections.
 - Added utilization progress indicators and expanded the default window to give the dashboard more room.
 - Kept telemetry collection in the background sampler and GTK updates on the main thread.
-- Added rolling 60-sample sparkline histories for CPU, GPU and memory utilization, drawn directly by GTK without a charting dependency.
+- Added rolling 60-sample utilization charts for CPU, GPU and memory with automatic Y-axis scaling, percentage labels, grid lines, a shaded area, latest-value marker and time labels.
 - Added Linux uptime and load-average readings from procfs.
 - Added dynamic hwmon discovery for temperature and fan RPM readings, preserving labels exported by the kernel.
 - Grouped duplicate exported RAPL package labels in the overview so repeated sysfs aliases do not flood the CPU card.
