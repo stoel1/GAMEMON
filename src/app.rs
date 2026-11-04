@@ -261,7 +261,7 @@ impl MetricCard {
         });
         resize_grip.add_controller(drag);
 
-        // Samples arrive at the configured interval; ease visual values at ~60 FPS.
+        // Ease visual values at ~30 FPS; redraw only while the chart is actually visible.
         let weak_progress = progress.downgrade();
         let weak_chart = chart.downgrade();
         let animated = Rc::clone(&displayed_usage);
@@ -275,7 +275,7 @@ impl MetricCard {
             let difference = destination - current;
             let next = if difference.abs() < 0.05 { destination } else { current + difference * 0.22 };
             animated.set(next);
-            if (next - current).abs() >= 0.05 || (next - destination).abs() < 0.05 {
+            if (next - current).abs() > 0.001 {
                 progress.set_fraction(next / 100.0);
                 if chart.is_mapped() {
                     chart.queue_draw();
@@ -310,7 +310,9 @@ impl MetricCard {
             }
             history.push_back(value);
             drop(history);
-            self.chart.queue_draw();
+            if self.chart.is_mapped() {
+                self.chart.queue_draw();
+            }
         } else {
             self.target_usage.set(0.0);
             self.displayed_usage.set(0.0);
@@ -1017,19 +1019,19 @@ fn set_metric_details(container: &gtk::Box, text: &str) {
 
         if let Some(line) = lines.get(index) {
             if let Some((label_text, value_text)) = line.split_once(':') {
-                label.set_text(label_text.trim());
-                value.set_text(value_text.trim());
+                if label.text().as_str() != label_text.trim() { label.set_text(label_text.trim()); }
+                if value.text().as_str() != value_text.trim() { value.set_text(value_text.trim()); }
                 label.set_visible(true);
                 value.set_visible(true);
             } else {
-                label.set_text(line.trim());
-                value.set_text("");
+                if label.text().as_str() != line.trim() { label.set_text(line.trim()); }
+                if !value.text().is_empty() { value.set_text(""); }
                 label.set_visible(true);
                 value.set_visible(false);
             }
         } else {
-            label.set_text("");
-            value.set_text("");
+            if !label.text().is_empty() { label.set_text(""); }
+            if !value.text().is_empty() { value.set_text(""); }
             label.set_visible(false);
             value.set_visible(false);
         }
