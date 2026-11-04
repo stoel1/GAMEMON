@@ -6,13 +6,13 @@ use std::{
     time::Duration,
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const DEFAULT_REFRESH_INTERVAL_MS: u64 = 1000;
 const MINIMUM_REFRESH_INTERVAL_MS: u64 = 100;
 const MAXIMUM_REFRESH_INTERVAL_MS: u64 = 60_000;
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(default)]
 pub struct AppConfig {
     pub refresh_interval_ms: u64,
@@ -46,6 +46,28 @@ impl AppConfig {
                 Self::default()
             }
         }
+    }
+
+
+    pub fn save(self) -> std::io::Result<PathBuf> {
+        let path = config_path().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::NotFound, "no absolute configuration directory is available")
+        })?;
+        let parent = path.parent().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "configuration path has no parent directory")
+        })?;
+        fs::create_dir_all(parent)?;
+
+        let contents = toml::to_string_pretty(&self).map_err(|error| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, error)
+        })?;
+        let temporary_path = path.with_extension("toml.tmp");
+        fs::write(&temporary_path, contents)?;
+        if let Err(error) = fs::rename(&temporary_path, &path) {
+            let _ = fs::remove_file(&temporary_path);
+            return Err(error);
+        }
+        Ok(path)
     }
 
     pub fn refresh_interval(self) -> Duration {
