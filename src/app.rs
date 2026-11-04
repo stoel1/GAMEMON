@@ -698,6 +698,7 @@ pub fn activate(application: &Application) {
         let extra_charts: &[(&str, &str)] = match key {
             "cpu" => &[("cpu_p", "Prestatiekernen (P-cores) · gebruik"), ("cpu_e", "Efficiëntiekernen (E-cores) · gebruik")],
             "gpu" => &[("gpu_power", "GPU-vermogen · watt"), ("gpu_vram", "VRAM-gebruik · GiB")],
+            "network" => &[("network_rx", "Ontvangen · RX"), ("network_tx", "Verzonden · TX")],
             _ => &[],
         };
         for (series_key, series_title) in extra_charts {
@@ -705,6 +706,7 @@ pub fn activate(application: &Application) {
                 "cpu_p" | "cpu_e" => "%",
                 "gpu_power" => "W",
                 "gpu_vram" => "GiB",
+                "network_rx" | "network_tx" => "MiB/s",
                 _ => "",
             };
             let (series_chart, series_history) = make_detail_chart(series_unit);
@@ -1128,6 +1130,8 @@ fn render_snapshot(
             let total_rate = network.interfaces.iter().filter_map(|i| i.rx_bytes_per_second).sum::<f64>()
                 + network.interfaces.iter().filter_map(|i| i.tx_bytes_per_second).sum::<f64>();
             push_detail_sample(detail_charts, "network", Some(total_rate / 1_048_576.0));
+            push_detail_sample(detail_charts, "network_rx", Some(network.interfaces.iter().filter_map(|i| i.rx_bytes_per_second).sum::<f64>() / 1_048_576.0));
+            push_detail_sample(detail_charts, "network_tx", Some(network.interfaces.iter().filter_map(|i| i.tx_bytes_per_second).sum::<f64>() / 1_048_576.0));
             let active = network.interfaces.iter().filter(|interface| interface.carrier == Some(true) || interface.operational_state.as_deref() == Some("up")).collect::<Vec<_>>();
             let rx = active.iter().filter_map(|interface| interface.rx_bytes_per_second).sum::<f64>();
             let tx = active.iter().filter_map(|interface| interface.tx_bytes_per_second).sum::<f64>();
@@ -1349,14 +1353,18 @@ fn set_network_detail(container: &gtk::Box, network: &network::NetworkSnapshot) 
         return;
     }
 
+    let active = network.interfaces.iter().filter(|i|
+        i.carrier == Some(true) || i.operational_state.as_deref() == Some("up")
+    ).collect::<Vec<_>>();
+    let rx = active.iter().filter_map(|i| i.rx_bytes_per_second).sum::<f64>();
+    let tx = active.iter().filter_map(|i| i.tx_bytes_per_second).sum::<f64>();
+
     let (summary_frame, summary) = network_section("Verkeer in totaal");
-    let rx = network.interfaces.iter().filter_map(|i| i.rx_bytes_per_second).sum::<f64>();
-    let tx = network.interfaces.iter().filter_map(|i| i.tx_bytes_per_second).sum::<f64>();
-    let stats = gtk::Box::new(Orientation::Horizontal, 24);
+    let stats = gtk::Box::new(Orientation::Horizontal, 20);
     stats.set_homogeneous(true);
-    for (title, value, arrow) in [
-        ("Ontvangen", format_rate(rx), "↓"),
-        ("Verzonden", format_rate(tx), "↑"),
+    for (title, value, arrow, accent) in [
+        ("Download · ontvangen", format_rate(rx), "↓", "success"),
+        ("Upload · verzonden", format_rate(tx), "↑", "accent"),
     ] {
         let item = gtk::Box::new(Orientation::Vertical, 4);
         let caption = gtk::Label::new(Some(title));
@@ -1366,22 +1374,23 @@ fn set_network_detail(container: &gtk::Box, network: &network::NetworkSnapshot) 
         amount.set_halign(Align::Start);
         amount.add_css_class("title-2");
         amount.add_css_class("numeric");
+        amount.add_css_class(accent);
         item.append(&caption);
         item.append(&amount);
         stats.append(&item);
     }
     summary.append(&stats);
-    let interface_count = gtk::Label::new(Some(&format!("{} interfaces · {} actief",
-        network.interfaces.len(),
-        network.interfaces.iter().filter(|i| i.carrier == Some(true) || i.operational_state.as_deref() == Some("up")).count()
-    )));
+    let interface_count = gtk::Label::new(Some(&format!("{} interfaces · {} actief", network.interfaces.len(), active.len())));
     interface_count.set_halign(Align::Start);
     interface_count.add_css_class("dim-label");
     summary.append(&interface_count);
     container.append(&summary_frame);
 
-    for interface in &network.interfaces {
-        let (frame, content) = network_section(&format!("Interface · {}", interface.name));
+    for (index, interface) in network.interfaces.iter().enumerate() {
+        let expander = gtk::Expander::new(Some(&format!("Interface · {}", interface.name)));
+        expander.set_expanded(index == 0);
+        expander.add_css_class("gamemon-section");
+        let (frame, content) = network_section("Verbindingsstatus");
         let status = format!("{} · carrier {} · {} · {}",
             interface.operational_state.as_deref().unwrap_or("status onbekend"),
             interface.carrier.map(|v| if v { "aanwezig" } else { "niet aanwezig" }).unwrap_or("onbekend"),
@@ -1395,9 +1404,9 @@ fn set_network_detail(container: &gtk::Box, network: &network::NetworkSnapshot) 
 
         let traffic = gtk::Box::new(Orientation::Horizontal, 20);
         traffic.set_homogeneous(true);
-        for (caption, value, color_class) in [
-            ("Ontvangen", interface.rx_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()), "success"),
-            ("Verzonden", interface.tx_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()), "accent"),
+        for (caption, value, accent) in [
+            ("Download · ontvangen", interface.rx_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()), "success"),
+            ("Upload · verzonden", interface.tx_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()), "accent"),
         ] {
             let item = gtk::Box::new(Orientation::Vertical, 3);
             let label = gtk::Label::new(Some(caption));
@@ -1407,7 +1416,7 @@ fn set_network_detail(container: &gtk::Box, network: &network::NetworkSnapshot) 
             amount.set_halign(Align::Start);
             amount.add_css_class("title-3");
             amount.add_css_class("numeric");
-            amount.add_css_class(color_class);
+            amount.add_css_class(accent);
             item.append(&label);
             item.append(&amount);
             traffic.append(&item);
@@ -1422,12 +1431,27 @@ fn set_network_detail(container: &gtk::Box, network: &network::NetworkSnapshot) 
 
         let errors = gtk::Box::new(Orientation::Horizontal, 16);
         errors.set_homogeneous(true);
-        network_value_row(&errors, "RX-fouten", &interface.rx_errors.unwrap_or(0).to_string());
-        network_value_row(&errors, "TX-fouten", &interface.tx_errors.unwrap_or(0).to_string());
-        network_value_row(&errors, "RX-drops", &interface.rx_dropped.unwrap_or(0).to_string());
-        network_value_row(&errors, "TX-drops", &interface.tx_dropped.unwrap_or(0).to_string());
+        for (label, value) in [
+            ("RX-fouten", interface.rx_errors.unwrap_or(0)),
+            ("TX-fouten", interface.tx_errors.unwrap_or(0)),
+            ("RX-drops", interface.rx_dropped.unwrap_or(0)),
+            ("TX-drops", interface.tx_dropped.unwrap_or(0)),
+        ] {
+            let item = gtk::Box::new(Orientation::Vertical, 2);
+            let caption = gtk::Label::new(Some(label));
+            caption.set_halign(Align::Start);
+            caption.add_css_class("dim-label");
+            let number = gtk::Label::new(Some(&value.to_string()));
+            number.set_halign(Align::Start);
+            number.add_css_class("numeric");
+            if value > 0 { number.add_css_class("warning"); }
+            item.append(&caption);
+            item.append(&number);
+            errors.append(&item);
+        }
         content.append(&errors);
-        container.append(&frame);
+        expander.set_child(Some(&frame));
+        container.append(&expander);
     }
 }
 
