@@ -138,6 +138,7 @@ impl MetricCard {
             }).collect::<Vec<_>>();
 
             context.move_to(coordinates[0].0, bottom);
+            context.line_to(coordinates[0].0, coordinates[0].1);
             append_smooth_line(context, &coordinates);
             context.line_to(coordinates.last().unwrap().0, bottom);
             context.close_path();
@@ -148,6 +149,7 @@ impl MetricCard {
             context.set_line_cap(gtk::cairo::LineCap::Round);
             context.set_line_join(gtk::cairo::LineJoin::Round);
             context.set_source_rgba(0.35, 0.72, 0.95, 1.0);
+            context.move_to(coordinates[0].0, coordinates[0].1);
             append_smooth_line(context, &coordinates);
             let _ = context.stroke();
 
@@ -1076,7 +1078,9 @@ fn install_styles() {
 // sharp corners of a straight-line sparkline.
 fn append_smooth_line(context: &gtk::cairo::Context, points: &[(f64, f64)]) {
     let Some(&(first_x, first_y)) = points.first() else { return };
-    context.move_to(first_x, first_y);
+    // The caller positions the Cairo path at the first point. Keeping this
+    // helper append-only lets the overview fill start at the chart baseline.
+    let _ = (first_x, first_y);
     if points.len() < 3 {
         for &(x, y) in points.iter().skip(1) {
             context.line_to(x, y);
@@ -1162,6 +1166,7 @@ fn make_detail_chart(unit: &'static str) -> (gtk::DrawingArea, Rc<RefCell<VecDeq
         context.set_line_cap(gtk::cairo::LineCap::Round);
         context.set_line_join(gtk::cairo::LineJoin::Round);
         context.set_source_rgba(0.35, 0.72, 0.95, 1.0);
+        context.move_to(coords[0].0, coords[0].1);
         append_smooth_line(context, &coords);
         let _ = context.stroke();
         let (x,y) = *coords.last().unwrap();
