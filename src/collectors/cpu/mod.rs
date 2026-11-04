@@ -69,6 +69,14 @@ impl CpuCollector {
             .map(|contents| contents.trim().to_owned())
             .filter(|contents| !contents.is_empty());
         let online_ids = online.as_deref().and_then(parse_cpu_list);
+        // Some kernels omit topology/core_type. In that case, use the per-CPU
+        // maximum frequency exposed by cpufreq to distinguish hybrid core classes.
+        let max_cpu_frequency = online_ids.as_ref().and_then(|ids| {
+            ids.iter().filter_map(|id| read_max_frequency(*id)).max()
+        });
+        let min_cpu_frequency = online_ids.as_ref().and_then(|ids| {
+            ids.iter().filter_map(|id| read_max_frequency(*id)).min()
+        });
         let stats = fs::read_to_string("/proc/stat")
             .map(|contents| parse_cpu_stat(&contents))
             .unwrap_or_default();
@@ -100,6 +108,15 @@ impl CpuCollector {
                     topology.package_id = topology.package_id.or(discovered.package_id);
                     topology.core_id = topology.core_id.or(discovered.core_id);
                     topology.core_type = topology.core_type.or(discovered.core_type);
+                }
+                if topology.core_type.is_none() {
+                    if let (Some(cpu_max), Some(highest), Some(lowest)) =
+                        (read_max_frequency(id), max_cpu_frequency, min_cpu_frequency)
+                    {
+                        if highest > lowest {
+                            topology.core_type = Some(if cpu_max == highest { 2 } else { 1 });
+                        }
+                    }
                 }
                 let topology = *topology;
                 let cpu_utilization = match stats.logical_cpus.get(&id).copied() {
@@ -159,6 +176,14 @@ fn read_current_frequency(cpu_id: u32) -> Option<u64> {
     ))
     .ok()
     .and_then(|value| parse_frequency_hz(value.trim()))
+}
+
+fn read_max_frequency(cpu_id: u32) -> Option<u64> {
+    let base = format!("/sys/devices/system/cpu/cpu{cpu_id}/cpufreq");
+    ["cpuinfo_max_freq", "scaling_max_freq"]
+        .iter()
+        .find_map(|name| fs::read_to_string(format!("{base}/{name}")).ok())
+        .and_then(|value| parse_frequency_hz(value.trim()))
 }
 
 fn parse_frequency_hz(value: &str) -> Option<u64> {
