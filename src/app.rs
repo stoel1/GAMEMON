@@ -1039,7 +1039,9 @@ fn make_detail_chart(unit: &'static str) -> (gtk::DrawingArea, Rc<RefCell<VecDeq
         let min = points.iter().copied().fold(f64::INFINITY, f64::min);
         let max = points.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         let padding = ((max - min) * 0.15).max(0.5);
-        let low = (min - padding).min(0.0);
+        // Percentages represent utilization and cannot be negative. Anchor
+        // these charts at zero so small values never produce a "-0%" axis.
+        let low = if unit == "%" { 0.0 } else { (min - padding).min(0.0) };
         let high = (max + padding).max(low + 1.0);
         let span = high - low;
         context.set_line_width(1.0);
