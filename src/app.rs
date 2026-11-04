@@ -740,6 +740,84 @@ pub fn activate(application: &Application) {
         stack.add_named(&page_scroll, Some(key));
         detail_labels.insert(key.to_owned(), data);
     }
+    // Settings page: the sampling interval is applied immediately and persisted for next launch.
+    let settings_page = gtk::Box::new(Orientation::Vertical, 12);
+    settings_page.set_margin_top(24);
+    settings_page.set_margin_bottom(24);
+    settings_page.set_margin_start(24);
+    settings_page.set_margin_end(24);
+    let settings_title = gtk::Label::new(Some("Instellingen"));
+    settings_title.set_halign(Align::Start);
+    settings_title.add_css_class("title-1");
+    let settings_description = gtk::Label::new(Some("Pas de meetfrequentie van hardwaremetingen aan."));
+    settings_description.set_halign(Align::Start);
+    settings_description.set_wrap(true);
+    settings_description.add_css_class("dim-label");
+    settings_page.append(&settings_title);
+    settings_page.append(&settings_description);
+
+    let interval_row = gtk::Box::new(Orientation::Horizontal, 12);
+    interval_row.set_halign(Align::Fill);
+    let interval_labels = gtk::Box::new(Orientation::Vertical, 3);
+    interval_labels.set_hexpand(true);
+    let interval_title = gtk::Label::new(Some("Meetinterval"));
+    interval_title.set_halign(Align::Start);
+    let interval_hint = gtk::Label::new(Some("100 ms tot 60.000 ms · lager is vaker meten"));
+    interval_hint.set_halign(Align::Start);
+    interval_hint.add_css_class("dim-label");
+    interval_labels.append(&interval_title);
+    interval_labels.append(&interval_hint);
+    let interval_input = gtk::SpinButton::with_range(100.0, 60_000.0, 100.0);
+    interval_input.set_digits(0);
+    interval_input.set_numeric(true);
+    interval_input.set_value(config.refresh_interval_ms.clamp(100, 60_000) as f64);
+    interval_input.set_width_chars(9);
+    interval_row.append(&interval_labels);
+    interval_row.append(&interval_input);
+    settings_page.append(&interval_row);
+
+    let settings_actions = gtk::Box::new(Orientation::Horizontal, 8);
+    settings_actions.set_halign(Align::Start);
+    let save_settings = gtk::Button::with_label("Instellingen opslaan");
+    save_settings.add_css_class("suggested-action");
+    let settings_status = gtk::Label::new(Some("Wijzigingen worden direct toegepast."));
+    settings_status.set_halign(Align::Start);
+    settings_status.add_css_class("dim-label");
+    settings_actions.append(&save_settings);
+    settings_page.append(&settings_actions);
+    settings_page.append(&settings_status);
+    let settings_scroll = gtk::ScrolledWindow::new();
+    settings_scroll.set_vexpand(true);
+    settings_scroll.set_child(Some(&settings_page));
+    stack.add_named(&settings_scroll, Some("settings"));
+
+    let config_for_save = Rc::new(RefCell::new(config));
+    let config_state = Rc::clone(&config_for_save);
+    let sampler_for_save = sampler_control.clone();
+    let interval_for_save = interval_input.clone();
+    let status_for_save = settings_status.clone();
+    save_settings.connect_clicked(move |_| {
+        let interval_ms = interval_for_save.value_as_int().clamp(100, 60_000) as u64;
+        let mut updated = *config_state.borrow();
+        updated.refresh_interval_ms = interval_ms;
+        match updated.save() {
+            Ok(path) => {
+                sampler_for_save.set_interval(Duration::from_millis(interval_ms));
+                *config_state.borrow_mut() = updated;
+                status_for_save.set_text(&format!("Opgeslagen en direct toegepast · {} ms", interval_ms));
+                status_for_save.remove_css_class("error");
+                status_for_save.add_css_class("success");
+                tracing::info!(path = %path.display(), refresh_interval_ms = interval_ms, "settings saved");
+            }
+            Err(error) => {
+                status_for_save.set_text(&format!("Opslaan mislukt: {error}"));
+                status_for_save.remove_css_class("success");
+                status_for_save.add_css_class("error");
+                tracing::warn!(%error, "could not save settings");
+            }
+        }
+    });
+
     let menu_button = gtk::MenuButton::new();
     menu_button.set_label("Hardware");
     let popover = gtk::Popover::new();
@@ -752,7 +830,7 @@ pub fn activate(application: &Application) {
         ("overview", "Overzicht"), ("cpu", "Processor"), ("gpu", "Graphics"),
         ("memory", "Geheugen"), ("motherboard", "Moederbord & sensoren"),
         ("storage", "Opslag"), ("network", "Netwerk"), ("processes", "Processen"),
-        ("system", "Systeem"),
+        ("system", "Systeem"), ("settings", "Instellingen"),
     ] {
         let button = gtk::Button::with_label(label);
         button.set_halign(Align::Fill);
@@ -779,8 +857,8 @@ pub fn activate(application: &Application) {
         .content(&toolbar)
         .build();
 
-    let config = AppConfig::load();
-    let receiver = sampler::start(SamplerConfig {
+    let mut config = AppConfig::load();
+    let (receiver, sampler_control) = sampler::start(SamplerConfig {
         interval: config.refresh_interval(),
     });
     let history_store = crate::core::history::HistoryStore::new().map(Rc::new);
