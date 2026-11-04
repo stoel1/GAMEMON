@@ -639,6 +639,7 @@ fn downgrade_card(card: MetricCard) -> WeakMetricCard {
         history: Rc::clone(&card.history),
         displayed_usage: Rc::clone(&card.displayed_usage),
         target_usage: Rc::clone(&card.target_usage),
+        animation_active: Rc::clone(&card.animation_active),
         details: card.details.downgrade(),
     }
 }
@@ -651,6 +652,7 @@ struct WeakMetricCard {
     history: Rc<RefCell<VecDeque<f64>>>,
     displayed_usage: Rc<Cell<f64>>,
     target_usage: Rc<Cell<f64>>,
+    animation_active: Rc<Cell<bool>>,
     details: gtk::glib::WeakRef<gtk::Box>,
 }
 
@@ -663,6 +665,7 @@ fn upgrade_card(card: &WeakMetricCard) -> Option<MetricCard> {
         history: Rc::clone(&card.history),
         displayed_usage: Rc::clone(&card.displayed_usage),
         target_usage: Rc::clone(&card.target_usage),
+        animation_active: Rc::clone(&card.animation_active),
         details: card.details.upgrade()?,
     })
 }
