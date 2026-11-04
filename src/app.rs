@@ -1278,9 +1278,13 @@ fn append_smooth_line(context: &gtk::cairo::Context, points: &[(f64, f64)]) {
             points[index + 2]
         };
         let control1_x = x0 + (x1 - previous_x) / 6.0;
-        let control1_y = y0 + (y1 - previous_y) / 6.0;
         let control2_x = x1 - (next_x - x0) / 6.0;
-        let control2_y = y1 - (next_y - y0) / 6.0;
+        let segment_min_y = y0.min(y1);
+        let segment_max_y = y0.max(y1);
+        let control1_y = (y0 + (y1 - previous_y) / 6.0)
+            .clamp(segment_min_y, segment_max_y);
+        let control2_y = (y1 - (next_y - y0) / 6.0)
+            .clamp(segment_min_y, segment_max_y);
         context.curve_to(control1_x, control1_y, control2_x, control2_y, x1, y1);
     }
 }
