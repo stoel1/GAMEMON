@@ -30,7 +30,7 @@ Run the collector unit tests with `cargo test`.
 
 ## Configuration
 
-GAMEMON reads `gamemon/config.toml` from `$XDG_CONFIG_HOME`, or from `~/.config` when that variable is unset. For example, set `refresh_interval_ms = 1000` to sample once per second. Supported intervals are clamped to 100 ms–60 s. GAMEMON does not create or modify the configuration file automatically.
+GAMEMON reads `gamemon/config.toml` from `$XDG_CONFIG_HOME`, or from `~/.config` when that variable is unset. The Settings page lets you change the hardware sampling interval (100 ms–60 s), applies changes immediately, and saves them to this file for subsequent launches. Invalid or out-of-range values fall back to the supported interval bounds.
 
 On RHEL, install matching GTK4 and libadwaita development packages from enabled repositories before building.
 
