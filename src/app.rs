@@ -138,28 +138,19 @@ impl MetricCard {
             }).collect::<Vec<_>>();
 
             context.move_to(coordinates[0].0, bottom);
-            for (x, y) in &coordinates {
-                context.line_to(*x, *y);
-            }
+            append_smooth_line(context, &coordinates);
             context.line_to(coordinates.last().unwrap().0, bottom);
             context.close_path();
             context.set_source_rgba(0.25, 0.68, 0.91, 0.12);
             let _ = context.fill();
 
-            context.set_line_width(2.0);
+            context.set_line_width(2.2);
             context.set_line_cap(gtk::cairo::LineCap::Round);
             context.set_line_join(gtk::cairo::LineJoin::Round);
             context.set_source_rgba(0.35, 0.72, 0.95, 1.0);
-            for (index, (x, y)) in coordinates.iter().enumerate() {
-                if index == 0 {
-                    context.move_to(*x, *y);
-                } else {
-                    context.line_to(*x, *y);
-                }
-            }
+            append_smooth_line(context, &coordinates);
             let _ = context.stroke();
 
-            let latest = points.last().copied().unwrap_or_default();
             context.set_source_rgba(0.35, 0.72, 0.95, 1.0);
             context.arc(coordinates.last().unwrap().0, coordinates.last().unwrap().1, 3.0, 0.0, std::f64::consts::TAU);
             let _ = context.fill();
@@ -1080,6 +1071,40 @@ fn install_styles() {
     );
 }
 
+// Convert each segment to a cubic Bezier curve using a Catmull-Rom
+// tangent. This preserves the measured sample positions while removing the
+// sharp corners of a straight-line sparkline.
+fn append_smooth_line(context: &gtk::cairo::Context, points: &[(f64, f64)]) {
+    let Some(&(first_x, first_y)) = points.first() else { return };
+    context.move_to(first_x, first_y);
+    if points.len() < 3 {
+        for &(x, y) in points.iter().skip(1) {
+            context.line_to(x, y);
+        }
+        return;
+    }
+
+    for index in 0..points.len() - 1 {
+        let (x0, y0) = points[index];
+        let (x1, y1) = points[index + 1];
+        let (previous_x, previous_y) = if index == 0 {
+            (x0, y0)
+        } else {
+            points[index - 1]
+        };
+        let (next_x, next_y) = if index + 2 >= points.len() {
+            (x1, y1)
+        } else {
+            points[index + 2]
+        };
+        let control1_x = x0 + (x1 - previous_x) / 6.0;
+        let control1_y = y0 + (y1 - previous_y) / 6.0;
+        let control2_x = x1 - (next_x - x0) / 6.0;
+        let control2_y = y1 - (next_y - y0) / 6.0;
+        context.curve_to(control1_x, control1_y, control2_x, control2_y, x1, y1);
+    }
+}
+
 fn make_detail_chart(unit: &'static str) -> (gtk::DrawingArea, Rc<RefCell<VecDeque<f64>>>) {
     let history = Rc::new(RefCell::new(VecDeque::<f64>::with_capacity(60)));
     let chart = gtk::DrawingArea::new();
@@ -1133,12 +1158,11 @@ fn make_detail_chart(unit: &'static str) -> (gtk::DrawingArea, Rc<RefCell<VecDeq
             let y = bottom - ((*v-low)/span) * (bottom-top);
             (x,y)
         }).collect::<Vec<_>>();
-        context.set_line_width(2.0);
+        context.set_line_width(2.2);
         context.set_line_cap(gtk::cairo::LineCap::Round);
         context.set_line_join(gtk::cairo::LineJoin::Round);
         context.set_source_rgba(0.35, 0.72, 0.95, 1.0);
-        context.move_to(coords[0].0, coords[0].1);
-        for (x,y) in coords.iter().skip(1) { context.line_to(*x,*y); }
+        append_smooth_line(context, &coords);
         let _ = context.stroke();
         let (x,y) = *coords.last().unwrap();
         context.arc(x,y,3.5,0.0,std::f64::consts::TAU);
