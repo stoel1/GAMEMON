@@ -1,4 +1,4 @@
-use std::{cell::{Cell, RefCell}, collections::{BTreeMap, VecDeque}, rc::Rc, sync::mpsc::TryRecvError, time::Duration};
+use std::{cell::{Cell, RefCell}, collections::{BTreeMap, VecDeque}, rc::Rc, sync::mpsc::TryRecvError, time::{Duration, Instant}};
 
 use adw::prelude::*;
 use adw::{Application, ApplicationWindow, HeaderBar, ToolbarView};
@@ -13,6 +13,12 @@ use crate::{
 };
 
 const UI_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const GRAPH_SAMPLE_INTERVAL: Duration = Duration::from_millis(500);
+
+thread_local! {
+    // Graph history advances at a fixed cadence, independently of hardware polling.
+    static GRAPH_SAMPLE_DUE: Cell<bool> = const { Cell::new(true) };
+}
 
 struct MetricCard {
     primary: gtk::Label,
@@ -79,7 +85,7 @@ impl MetricCard {
         let displayed_usage = Rc::new(Cell::new(0.0));
         let target_usage = Rc::new(Cell::new(0.0));
         let animation_active = Rc::new(Cell::new(false));
-        let network_history = Rc::new(RefCell::new(VecDeque::<(f64, f64)>::with_capacity(600)));
+        let network_history = Rc::new(RefCell::new(VecDeque::<(f64, f64)>::with_capacity(120)));
         let overview_data = Rc::new(RefCell::new(Vec::<(String, f64)>::new()));
         let chart_history = Rc::clone(&history);
         let chart_displayed = Rc::clone(&displayed_usage);
@@ -164,7 +170,7 @@ impl MetricCard {
 
             context.set_source_rgba(0.72, 0.74, 0.77, 0.9);
             context.move_to(left, height - 4.0);
-            let _ = context.show_text("60 metingen geleden");
+            let _ = context.show_text("30 seconden geleden");
             let label = "nu";
             let label_width = context.text_extents(label).map(|extents| extents.width()).unwrap_or(12.0);
             context.move_to(right - label_width, height - 4.0);
@@ -440,13 +446,12 @@ impl MetricCard {
                 let _ = context.show_text(&format!("{:.1}", scale_max * fraction));
             }
 
-            // The history is sampled at 10 Hz; retain 600 points for a rolling
-            // 60-second window and spread the samples across the whole plot.
+            // Graph history advances at a fixed 2 Hz, independent of the sampler.
             let count = samples.len();
             let make_points = |series: usize| -> Vec<(f64, f64)> {
                 samples.iter().enumerate().map(|(index, (rx, tx))| {
                     let value = if series == 0 { *rx } else { *tx };
-                    let x = left + index as f64 / 599.0 * plot_width;
+                    let x = left + index as f64 / 119.0 * plot_width;
                     let y = bottom - (value / scale_max).clamp(0.0, 1.0) * plot_height;
                     (x, y)
                 }).collect()
@@ -551,12 +556,13 @@ impl MetricCard {
             let value = value.clamp(0.0, 100.0);
             self.target_usage.set(value);
             self.start_animation_if_needed();
-            let mut history = self.history.borrow_mut();
-            if history.len() == 60 {
-                history.pop_front();
+            if GRAPH_SAMPLE_DUE.with(Cell::get) {
+                let mut history = self.history.borrow_mut();
+                if history.len() == 60 {
+                    history.pop_front();
+                }
+                history.push_back(value);
             }
-            history.push_back(value);
-            drop(history);
             if self.chart.is_mapped() {
                 self.chart.queue_draw();
             }
@@ -893,6 +899,7 @@ pub fn activate(application: &Application) {
     let mut detail_expanded: BTreeMap<String, BTreeMap<String, bool>> = BTreeMap::new();
 
     let history_for_timer = history_store.clone();
+    let mut last_graph_sample = Instant::now() - GRAPH_SAMPLE_INTERVAL;
     gtk::glib::timeout_add_local(UI_POLL_INTERVAL, move || {
         let (Some(cpu_card), Some(gpu_card), Some(memory_card), Some(network_card), Some(system_card), Some(sensors_card), Some(storage_card), Some(process_card)) = (
             upgrade_card(&cpu_card),
@@ -930,7 +937,11 @@ pub fn activate(application: &Application) {
             let visible_page = stack.visible_child_name()
                 .map(|name| name.to_string())
                 .unwrap_or_else(|| "overview".to_owned());
+            let graph_sample_due = last_graph_sample.elapsed() >= GRAPH_SAMPLE_INTERVAL;
+            if graph_sample_due { last_graph_sample = Instant::now(); }
+            GRAPH_SAMPLE_DUE.with(|due| due.set(graph_sample_due));
             render_snapshot(&snapshot, &cpu_card, &gpu_card, &memory_card, &network_card, &system_card, &sensors_card, &storage_card, &process_card, &detail_labels, &mut detail_expanded, &detail_charts, &visible_page);
+            GRAPH_SAMPLE_DUE.with(|due| due.set(false));
         }
         gtk::glib::ControlFlow::Continue
     });
@@ -1216,13 +1227,15 @@ fn render_snapshot(
             let tx = active.iter().filter_map(|interface| interface.tx_bytes_per_second).sum::<f64>();
             {
                 let mut history = network_card.network_history.borrow_mut();
-                if history.len() == 600 {
-                    history.pop_front();
+                if GRAPH_SAMPLE_DUE.with(Cell::get) {
+                    if history.len() == 120 {
+                        history.pop_front();
+                    }
+                    history.push_back((
+                        rx.max(0.0) * 8.0 / 1_000_000.0,
+                        tx.max(0.0) * 8.0 / 1_000_000.0,
+                    ));
                 }
-                history.push_back((
-                    rx.max(0.0) * 8.0 / 1_000_000.0,
-                    tx.max(0.0) * 8.0 / 1_000_000.0,
-                ));
             }
             if network_card.chart.is_mapped() {
                 network_card.chart.queue_draw();
@@ -1858,7 +1871,7 @@ fn make_detail_chart(unit: &'static str) -> (gtk::DrawingArea, Rc<RefCell<VecDeq
         context.set_font_size(10.0);
         context.set_source_rgba(0.72,0.74,0.77,0.9);
         context.move_to(left,bottom+16.0);
-        let _ = context.show_text("60 metingen geleden");
+        let _ = context.show_text("30 seconden geleden");
         context.move_to(right-18.0,bottom+16.0);
         let _ = context.show_text("nu");
     });
@@ -1871,7 +1884,8 @@ fn push_detail_sample(
     value: Option<f64>,
 ) {
     let Some((chart, history)) = charts.get(key) else { return };
-    if let Some(value) = value.filter(|v| v.is_finite()) {
+    if GRAPH_SAMPLE_DUE.with(Cell::get) {
+      if let Some(value) = value.filter(|v| v.is_finite()) {
         let mut values = history.borrow_mut();
         if values.len() == 60 { values.pop_front(); }
         values.push_back(value);
@@ -1879,6 +1893,7 @@ fn push_detail_sample(
         if chart.is_mapped() {
             chart.queue_draw();
         }
+      }
     }
 }
 fn set_detail_if_visible(
