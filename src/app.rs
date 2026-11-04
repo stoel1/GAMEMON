@@ -32,24 +32,34 @@ impl MetricCard {
         container.set_margin_bottom(18);
         container.set_margin_start(18);
         container.set_margin_end(18);
-        container.set_vexpand(true);
+        container.set_vexpand(false);
+        container.set_hexpand(true);
 
         let heading = gtk::Label::new(Some(title));
         heading.set_halign(Align::Start);
+        heading.set_single_line_mode(true);
+        heading.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        heading.set_height_request(22);
         heading.add_css_class("heading");
         heading.add_css_class("dim-label");
 
         let primary = gtk::Label::new(Some("Meten…"));
         primary.set_halign(Align::Start);
+        primary.set_single_line_mode(true);
+        primary.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        primary.set_height_request(44);
+        primary.set_max_width_chars(34);
         primary.add_css_class("title-1");
         primary.add_css_class("numeric");
 
         let secondary = gtk::Label::new(Some(subtitle));
         secondary.set_halign(Align::Start);
-        secondary.add_css_class("dim-label");
-        secondary.set_wrap(true);
-        secondary.set_lines(2);
+        secondary.set_single_line_mode(true);
         secondary.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        secondary.set_height_request(22);
+        secondary.set_max_width_chars(72);
+        secondary.set_tooltip_text(Some(subtitle));
+        secondary.add_css_class("dim-label");
 
         let progress = gtk::ProgressBar::new();
         progress.set_show_text(false);
@@ -59,8 +69,9 @@ impl MetricCard {
         let history = Rc::new(RefCell::new(VecDeque::<f64>::with_capacity(60)));
         let chart = gtk::DrawingArea::new();
         chart.set_content_height(120);
+        chart.set_size_request(-1, 120);
         chart.set_hexpand(true);
-        chart.set_vexpand(true);
+        chart.set_vexpand(false);
         chart.add_css_class("gamemon-sparkline");
         let displayed_usage = Rc::new(Cell::new(0.0));
         let target_usage = Rc::new(Cell::new(0.0));
@@ -206,6 +217,7 @@ impl MetricCard {
         frame.set_vexpand(false);
         frame.set_valign(Align::Start);
         frame.set_size_request(-1, 330);
+        frame.set_height_request(330);
 
         // Sleepbare onderrand om de kaart individueel hoger of lager te maken.
         let resize_grip = gtk::Button::with_label("⠿  Sleep om kaart te vergroten/verkleinen");
