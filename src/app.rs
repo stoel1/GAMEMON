@@ -740,6 +740,11 @@ pub fn activate(application: &Application) {
         stack.add_named(&page_scroll, Some(key));
         detail_labels.insert(key.to_owned(), data);
     }
+    let config = AppConfig::load();
+    let (receiver, sampler_control) = sampler::start(SamplerConfig {
+        interval: config.refresh_interval(),
+    });
+
     // Settings page: the sampling interval is applied immediately and persisted for next launch.
     let settings_page = gtk::Box::new(Orientation::Vertical, 12);
     settings_page.set_margin_top(24);
@@ -857,10 +862,6 @@ pub fn activate(application: &Application) {
         .content(&toolbar)
         .build();
 
-    let mut config = AppConfig::load();
-    let (receiver, sampler_control) = sampler::start(SamplerConfig {
-        interval: config.refresh_interval(),
-    });
     let history_store = crate::core::history::HistoryStore::new().map(Rc::new);
     if let Some(history) = history_store.clone() {
         let export_button = gtk::Button::with_label("Exporteer CSV");
