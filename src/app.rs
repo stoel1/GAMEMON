@@ -584,7 +584,10 @@ pub fn activate(application: &Application) {
         }
         if let Some(snapshot) = latest {
             if let Some(history) = &history_for_timer { history.append(&snapshot); }
-            render_snapshot(&snapshot, &cpu_card, &gpu_card, &memory_card, &network_card, &system_card, &sensors_card, &storage_card, &process_card, &detail_labels, &mut detail_expanded, &detail_charts);
+            let visible_page = stack.visible_child_name()
+                .map(|name| name.to_string())
+                .unwrap_or_else(|| "overview".to_owned());
+            render_snapshot(&snapshot, &cpu_card, &gpu_card, &memory_card, &network_card, &system_card, &sensors_card, &storage_card, &process_card, &detail_labels, &mut detail_expanded, &detail_charts, &visible_page);
         }
         gtk::glib::ControlFlow::Continue
     });
@@ -643,6 +646,7 @@ fn render_snapshot(
     detail_labels: &BTreeMap<String, gtk::Box>,
     detail_expanded: &mut BTreeMap<String, BTreeMap<String, bool>>,
     detail_charts: &BTreeMap<String, (gtk::DrawingArea, Rc<RefCell<VecDeque<f64>>>)>,
+    visible_page: &str,
 ) {
     let cpu = &snapshot.cpu;
     let cpu_usage = cpu_utilization_value(cpu.utilization);
@@ -863,7 +867,7 @@ fn render_snapshot(
             core.package_id.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned()),
             core.core_id.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned()))
     }).collect::<Vec<_>>().join("\n");
-    set_detail(detail_labels, detail_expanded, "cpu", &format!(
+    set_detail_if_visible(detail_labels, detail_expanded, visible_page, "cpu", &format!(
         "# Processoroverzicht\nModel: {}\nOnline CPU's: {}\nTotale belasting: {}\nGemiddelde klok: {}\n\n# Pakketvermogen\n{}\n\n# Logische processors · {} threads\n{}",
         snapshot.cpu.model.as_deref().unwrap_or("N/B"),
         snapshot.cpu.online.as_deref().unwrap_or("N/B"),
@@ -892,10 +896,10 @@ fn render_snapshot(
         d.drm_card.as_deref().unwrap_or("N/B"), d.pci_address.as_deref().unwrap_or("N/B"),
         d.driver.as_deref().unwrap_or("N/B"), d.telemetry_source.unwrap_or("N/B"), d.uuid.as_deref().unwrap_or("N/B")
     )).collect::<Vec<_>>().join("\n\n")).unwrap_or_else(|| "# GPU\nGPU-telemetrie niet beschikbaar".to_owned());
-    set_detail(detail_labels, detail_expanded, "gpu", &gpu_text);
+    set_detail_if_visible(detail_labels, detail_expanded, visible_page, "gpu", &gpu_text);
 
     let m = snapshot.memory;
-    set_detail(detail_labels, detail_expanded, "memory", &format!(
+    set_detail_if_visible(detail_labels, detail_expanded, visible_page, "memory", &format!(
         "# RAM\nTotaal: {}\nGebruikt: {}\nBeschikbaar: {}\nVrij: {}\nBuffers: {}\nCache: {}\n\n# Swap\nTotaal: {}\nGebruikt: {}\nVrij: {}\n\n# HugePages\nTotaal: {}\nVrij: {}\nPaginaformaat: {}\n\n# Memory pressure (PSI)\nSome: {}\nFull: {}",
         m.total_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
         m.used_bytes().map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
@@ -915,7 +919,7 @@ fn render_snapshot(
 
     let temperature_text = snapshot.system.temperatures.iter().map(|v| format!("{}: {:.1} °C", v.label, v.celsius)).collect::<Vec<_>>().join("\n");
     let fan_text = snapshot.system.fans.iter().map(|v| format!("{}: {} RPM", v.label, v.rpm)).collect::<Vec<_>>().join("\n");
-    set_detail(detail_labels, detail_expanded, "motherboard", &format!(
+    set_detail_if_visible(detail_labels, detail_expanded, visible_page, "motherboard", &format!(
         "# Temperatuurmetingen\n{}\n\n# Ventilatoren\n{}",
         if temperature_text.is_empty() { "Geen temperatuurmetingen beschikbaar" } else { &temperature_text },
         if fan_text.is_empty() { "Geen ventilatormetingen beschikbaar" } else { &fan_text }
@@ -936,7 +940,7 @@ fn render_snapshot(
         d.reads_completed.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned()),
         d.writes_completed.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned())
     )).collect::<Vec<_>>().join("\n");
-    set_detail(detail_labels, detail_expanded, "storage", &format!(
+    set_detail_if_visible(detail_labels, detail_expanded, visible_page, "storage", &format!(
         "# Bestandssystemen\n{}\n\n# Schijfactiviteit\n{}",
         if filesystem_text.is_empty() { "Geen bestandssystemen gevonden" } else { &filesystem_text },
         if disk_text.is_empty() { "Geen schijfstatistieken beschikbaar" } else { &disk_text }
@@ -949,7 +953,7 @@ fn render_snapshot(
         p.memory_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
         p.state.map(|v| v.to_string()).unwrap_or_else(|| "?".to_owned())
     )).collect::<Vec<_>>().join("\n");
-    set_detail(detail_labels, detail_expanded, "processes", &format!("# Actieve processen · {}\n{}", snapshot.processes.processes.len(), if process_text.is_empty() { "Geen processen beschikbaar" } else { &process_text }));
+    set_detail_if_visible(detail_labels, detail_expanded, visible_page, "processes", &format!("# Actieve processen · {}\n{}", snapshot.processes.processes.len(), if process_text.is_empty() { "Geen processen beschikbaar" } else { &process_text }));
 
     let network_text = snapshot.network.as_ref().map(|n| n.interfaces.iter().map(|i| format!(
         "# Interface {}\nStatus: {}\nCarrier: {}\nLinksnelheid: {}\nDuplex: {}\nOntvangen: {}\nVerzonden: {}\nTotaal ontvangen: {}\nTotaal verzonden: {}\nRX-fouten: {}\nTX-fouten: {}\nRX-drops: {}\nTX-drops: {}",
@@ -963,9 +967,9 @@ fn render_snapshot(
         i.tx_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
         i.rx_errors.unwrap_or(0), i.tx_errors.unwrap_or(0), i.rx_dropped.unwrap_or(0), i.tx_dropped.unwrap_or(0)
     )).collect::<Vec<_>>().join("\n\n")).unwrap_or_else(|| "# Netwerk\nNetwerkgegevens niet beschikbaar".to_owned());
-    set_detail(detail_labels, detail_expanded, "network", &network_text);
+    set_detail_if_visible(detail_labels, detail_expanded, visible_page, "network", &network_text);
 
-    set_detail(detail_labels, detail_expanded, "system", &format!(
+    set_detail_if_visible(detail_labels, detail_expanded, visible_page, "system", &format!(
         "# Systeemstatus\nUptime: {}\n\n# Load average\n1 minuut: {}\n5 minuten: {}\n15 minuten: {}",
         snapshot.system.uptime_seconds.map(|v| format_uptime(v)).unwrap_or_else(|| "N/B".to_owned()),
         snapshot.system.load_average.map(|v| format!("{:.2}",v[0])).unwrap_or_else(|| "N/B".to_owned()),
@@ -1145,6 +1149,20 @@ fn push_detail_sample(
         chart.queue_draw();
     }
 }
+fn set_detail_if_visible(
+    labels: &BTreeMap<String, gtk::Box>,
+    expanded_states: &mut BTreeMap<String, BTreeMap<String, bool>>,
+    visible_page: &str,
+    key: &str,
+    value: &str,
+) {
+    // Detail widgets are expensive to rebuild. Only update the page currently
+    // shown; the latest snapshot is applied on the next poll after navigation.
+    if visible_page == key {
+        set_detail(labels, expanded_states, key, value);
+    }
+}
+
 fn set_detail(
     labels: &BTreeMap<String, gtk::Box>,
     expanded_states: &mut BTreeMap<String, BTreeMap<String, bool>>,
