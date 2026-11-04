@@ -92,10 +92,14 @@ impl CpuCollector {
                 .retain(|cpu_id, _| ids.binary_search(cpu_id).is_ok());
             for id in ids {
                 let topology = self.topology.entry(id).or_default();
-                if topology.package_id.is_none() || topology.core_id.is_none() {
+                if topology.package_id.is_none()
+                    || topology.core_id.is_none()
+                    || topology.core_type.is_none()
+                {
                     let discovered = read_topology(id);
                     topology.package_id = topology.package_id.or(discovered.package_id);
                     topology.core_id = topology.core_id.or(discovered.core_id);
+                    topology.core_type = topology.core_type.or(discovered.core_type);
                 }
                 let topology = *topology;
                 let cpu_utilization = match stats.logical_cpus.get(&id).copied() {
