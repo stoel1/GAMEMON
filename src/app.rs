@@ -364,7 +364,14 @@ pub fn activate(application: &Application) {
         subtitle.add_css_class("dim-label");
         let data = gtk::Box::new(Orientation::Vertical, 8);
         data.set_hexpand(true);
-        let (chart, history) = make_detail_chart();
+        let chart_unit = match key {
+            "cpu" | "memory" | "processes" | "gpu" => "%",
+            "network" | "storage" => "MiB/s",
+            "system" => "load",
+            "motherboard" => "°C",
+            _ => "",
+        };
+        let (chart, history) = make_detail_chart(chart_unit);
         let chart_card = gtk::Frame::new(None);
         chart_card.add_css_class("card");
         let chart_content = gtk::Box::new(Orientation::Vertical, 6);
@@ -389,7 +396,13 @@ pub fn activate(application: &Application) {
             _ => &[],
         };
         for (series_key, series_title) in extra_charts {
-            let (series_chart, series_history) = make_detail_chart();
+            let series_unit = match *series_key {
+                "cpu_p" | "cpu_e" => "%",
+                "gpu_power" => "W",
+                "gpu_vram" => "GiB",
+                _ => "",
+            };
+            let (series_chart, series_history) = make_detail_chart(series_unit);
             let series_card = gtk::Frame::new(None);
             series_card.add_css_class("card");
             let series_content = gtk::Box::new(Orientation::Vertical, 6);
@@ -1008,7 +1021,7 @@ fn install_styles() {
     );
 }
 
-fn make_detail_chart() -> (gtk::DrawingArea, Rc<RefCell<VecDeque<f64>>>) {
+fn make_detail_chart(unit: &'static str) -> (gtk::DrawingArea, Rc<RefCell<VecDeque<f64>>>) {
     let history = Rc::new(RefCell::new(VecDeque::<f64>::with_capacity(60)));
     let chart = gtk::DrawingArea::new();
     chart.set_content_height(150);
@@ -1019,7 +1032,7 @@ fn make_detail_chart() -> (gtk::DrawingArea, Rc<RefCell<VecDeque<f64>>>) {
         if width < 2 || height < 2 { return; }
         let points = values.borrow();
         if points.is_empty() { return; }
-        let left = 12.0;
+        let left = 76.0;
         let right = f64::from(width) - 12.0;
         let top = 12.0;
         let bottom = f64::from(height) - 22.0;
@@ -1032,10 +1045,26 @@ fn make_detail_chart() -> (gtk::DrawingArea, Rc<RefCell<VecDeque<f64>>>) {
         context.set_line_width(1.0);
         context.set_source_rgba(0.65, 0.68, 0.72, 0.22);
         for tick in 0..=3 {
-            let y = top + (bottom-top) * tick as f64 / 3.0;
+            let fraction = tick as f64 / 3.0;
+            let y = top + (bottom-top) * fraction;
             context.move_to(left, y);
             context.line_to(right, y);
             let _ = context.stroke();
+
+            let tick_value = high - fraction * span;
+            let label = match unit {
+                "%" => format!("{tick_value:.0}%"),
+                "W" => format!("{tick_value:.0} W"),
+                "GiB" => format!("{tick_value:.1} GiB"),
+                "°C" => format!("{tick_value:.0} °C"),
+                "MiB/s" => format!("{tick_value:.1} MiB/s"),
+                "load" => format!("{tick_value:.1}"),
+                _ => format!("{tick_value:.1}"),
+            };
+            context.set_font_size(10.0);
+            context.set_source_rgba(0.72, 0.74, 0.77, 0.9);
+            context.move_to(4.0, y + 3.0);
+            let _ = context.show_text(&label);
         }
         let coords = points.iter().enumerate().map(|(i,v)| {
             // Keep a fixed 60-sample horizontal scale while history accumulates.
