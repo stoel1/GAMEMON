@@ -164,7 +164,31 @@ impl MetricCard {
 
         let details = gtk::Box::new(Orientation::Vertical, 5);
         details.set_hexpand(true);
-        details.set_vexpand(true);
+        details.set_vexpand(false);
+        // Keep a fixed three-row widget structure. Updating label text instead
+        // of recreating rows prevents GTK from renegotiating card sizes each poll.
+        for _ in 0..3 {
+            let row = gtk::Box::new(Orientation::Horizontal, 8);
+            row.set_hexpand(true);
+            row.set_halign(Align::Fill);
+            let label = gtk::Label::new(None);
+            label.set_halign(Align::Start);
+            label.set_xalign(0.0);
+            label.set_single_line_mode(true);
+            label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            label.set_hexpand(true);
+            label.add_css_class("dim-label");
+            let value = gtk::Label::new(None);
+            value.set_halign(Align::End);
+            value.set_xalign(1.0);
+            value.set_single_line_mode(true);
+            value.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            value.set_max_width_chars(32);
+            value.add_css_class("numeric");
+            row.append(&label);
+            row.append(&value);
+            details.append(&row);
+        }
         set_metric_details(&details, "Gegevens worden verzameld…");
 
         container.append(&heading);
@@ -937,47 +961,41 @@ fn render_snapshot(
 
 
 fn set_metric_details(container: &gtk::Box, text: &str) {
-    while let Some(child) = container.first_child() {
-        container.remove(&child);
-    }
+    let lines = text.lines()
+        .filter(|line| !line.trim().is_empty())
+        .take(3)
+        .collect::<Vec<_>>();
 
-    let lines = text.lines().filter(|line| !line.trim().is_empty()).take(3);
-    for line in lines {
-        let row = gtk::Box::new(Orientation::Horizontal, 8);
-        row.set_hexpand(true);
-        row.set_halign(Align::Fill);
+    let mut child = container.first_child();
+    for index in 0..3 {
+        let Some(row_widget) = child else { break };
+        child = row_widget.next_sibling();
+        let Ok(row) = row_widget.downcast::<gtk::Box>() else { continue };
+        let Some(label_widget) = row.first_child() else { continue };
+        let Some(value_widget) = label_widget.next_sibling() else { continue };
+        let (Ok(label), Ok(value)) = (
+            label_widget.downcast::<gtk::Label>(),
+            value_widget.downcast::<gtk::Label>(),
+        ) else { continue };
 
-        if let Some((label_text, value_text)) = line.split_once(':') {
-            let label = gtk::Label::new(Some(label_text.trim()));
-            label.set_halign(Align::Start);
-            label.set_xalign(0.0);
-            label.set_single_line_mode(true);
-            label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            label.set_hexpand(true);
-            label.add_css_class("dim-label");
-
-            let value = gtk::Label::new(Some(value_text.trim()));
-            value.set_halign(Align::End);
-            value.set_xalign(1.0);
-            value.set_single_line_mode(true);
-            value.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            value.set_max_width_chars(32);
-            value.set_selectable(false);
-            value.add_css_class("numeric");
-            row.append(&label);
-            row.append(&value);
+        if let Some(line) = lines.get(index) {
+            if let Some((label_text, value_text)) = line.split_once(':') {
+                label.set_text(label_text.trim());
+                value.set_text(value_text.trim());
+                label.set_visible(true);
+                value.set_visible(true);
+            } else {
+                label.set_text(line.trim());
+                value.set_text("");
+                label.set_visible(true);
+                value.set_visible(false);
+            }
         } else {
-            let value = gtk::Label::new(Some(line.trim()));
-            value.set_halign(Align::Start);
-            value.set_xalign(0.0);
-            value.set_single_line_mode(true);
-            value.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            value.set_hexpand(true);
-            value.set_selectable(false);
-            value.add_css_class("dim-label");
-            row.append(&value);
+            label.set_text("");
+            value.set_text("");
+            label.set_visible(false);
+            value.set_visible(false);
         }
-        container.append(&row);
     }
 }
 
