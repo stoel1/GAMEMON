@@ -13,7 +13,6 @@ use crate::{
 };
 
 const UI_POLL_INTERVAL: Duration = Duration::from_millis(100);
-const CHART_FRAME_INTERVAL: Duration = Duration::from_millis(33);
 
 struct MetricCard {
     primary: gtk::Label,
@@ -22,6 +21,7 @@ struct MetricCard {
     history: Rc<RefCell<VecDeque<f64>>>,
     displayed_usage: Rc<Cell<f64>>,
     target_usage: Rc<Cell<f64>>,
+    animation_active: Rc<Cell<bool>>,
     chart: gtk::DrawingArea,
     details: gtk::Box,
 }
@@ -76,6 +76,7 @@ impl MetricCard {
         chart.add_css_class("gamemon-sparkline");
         let displayed_usage = Rc::new(Cell::new(0.0));
         let target_usage = Rc::new(Cell::new(0.0));
+        let animation_active = Rc::new(Cell::new(false));
         let chart_history = Rc::clone(&history);
         let chart_displayed = Rc::clone(&displayed_usage);
         chart.set_draw_func(move |_, context, width, height| {
@@ -254,29 +255,6 @@ impl MetricCard {
         });
         resize_grip.add_controller(drag);
 
-        // Ease visual values at ~30 FPS; redraw only while the chart is actually visible.
-        let weak_progress = progress.downgrade();
-        let weak_chart = chart.downgrade();
-        let animated = Rc::clone(&displayed_usage);
-        let target = Rc::clone(&target_usage);
-        gtk::glib::timeout_add_local(CHART_FRAME_INTERVAL, move || {
-            let (Some(progress), Some(chart)) = (weak_progress.upgrade(), weak_chart.upgrade()) else {
-                return gtk::glib::ControlFlow::Break;
-            };
-            let current = animated.get();
-            let destination = target.get();
-            let difference = destination - current;
-            let next = if difference.abs() < 0.05 { destination } else { current + difference * 0.22 };
-            animated.set(next);
-            if (next - current).abs() > 0.001 {
-                progress.set_fraction(next / 100.0);
-                if chart.is_mapped() {
-                    chart.queue_draw();
-                }
-            }
-            gtk::glib::ControlFlow::Continue
-        });
-
         (
             frame,
             Self {
@@ -286,10 +264,62 @@ impl MetricCard {
                 history,
                 displayed_usage,
                 target_usage,
+                animation_active,
                 chart,
                 details,
             },
         )
+    }
+
+    fn start_animation_if_needed(&self) {
+        if !self.chart.is_mapped() || self.animation_active.replace(true) {
+            return;
+        }
+
+        let weak_progress = self.progress.downgrade();
+        let weak_chart = self.chart.downgrade();
+        let displayed = Rc::clone(&self.displayed_usage);
+        let target = Rc::clone(&self.target_usage);
+        let active = Rc::clone(&self.animation_active);
+        let previous_frame_time = Cell::new(None::<i64>);
+
+        // GTK's frame clock follows the refresh rate of the monitor currently
+        // displaying this widget. The callback exists only while a value animates.
+        self.chart.add_tick_callback(move |_, frame_clock| {
+            let (Some(progress), Some(chart)) = (weak_progress.upgrade(), weak_chart.upgrade()) else {
+                active.set(false);
+                return gtk::glib::ControlFlow::Break;
+            };
+
+            let frame_time = frame_clock.frame_time();
+            let delta_seconds = previous_frame_time
+                .replace(Some(frame_time))
+                .map(|previous| ((frame_time - previous).max(0) as f64 / 1_000_000.0).min(0.05))
+                .unwrap_or(1.0 / 60.0);
+
+            let current = displayed.get();
+            let destination = target.get();
+            let difference = destination - current;
+            let alpha = 1.0 - (-delta_seconds / 0.135).exp();
+            let next = if difference.abs() < 0.05 {
+                destination
+            } else {
+                current + difference * alpha
+            };
+            displayed.set(next);
+
+            if (next - current).abs() > 0.001 {
+                progress.set_fraction(next / 100.0);
+                chart.queue_draw();
+                gtk::glib::ControlFlow::Continue
+            } else {
+                displayed.set(destination);
+                progress.set_fraction(destination / 100.0);
+                chart.queue_draw();
+                active.set(false);
+                gtk::glib::ControlFlow::Break
+            }
+        });
     }
 
     fn set_usage(&self, value: Option<f64>) {
@@ -297,6 +327,7 @@ impl MetricCard {
             self.chart.set_visible(true);
             let value = value.clamp(0.0, 100.0);
             self.target_usage.set(value);
+            self.start_animation_if_needed();
             let mut history = self.history.borrow_mut();
             if history.len() == 60 {
                 history.pop_front();
@@ -308,8 +339,7 @@ impl MetricCard {
             }
         } else {
             self.target_usage.set(0.0);
-            self.displayed_usage.set(0.0);
-            self.progress.set_fraction(0.0);
+            self.start_animation_if_needed();
             // Keep the chart allocated even when telemetry is temporarily unavailable.
             self.chart.set_visible(true);
         }
