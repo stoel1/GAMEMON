@@ -1363,8 +1363,8 @@ fn set_network_detail(container: &gtk::Box, network: &network::NetworkSnapshot) 
     let stats = gtk::Box::new(Orientation::Horizontal, 20);
     stats.set_homogeneous(true);
     for (title, value, arrow, accent) in [
-        ("Download · ontvangen", format_rate(rx), "↓", "success"),
-        ("Upload · verzonden", format_rate(tx), "↑", "accent"),
+        ("Download · ontvangen", format_network_rate(rx), "↓", "success"),
+        ("Upload · verzonden", format_network_rate(tx), "↑", "accent"),
     ] {
         let item = gtk::Box::new(Orientation::Vertical, 4);
         let caption = gtk::Label::new(Some(title));
@@ -1405,8 +1405,8 @@ fn set_network_detail(container: &gtk::Box, network: &network::NetworkSnapshot) 
         let traffic = gtk::Box::new(Orientation::Horizontal, 20);
         traffic.set_homogeneous(true);
         for (caption, value, accent) in [
-            ("Download · ontvangen", interface.rx_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()), "success"),
-            ("Upload · verzonden", interface.tx_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()), "accent"),
+            ("Download · ontvangen", interface.rx_bytes_per_second.map(format_network_rate).unwrap_or_else(|| "N/B".to_owned()), "success"),
+            ("Upload · verzonden", interface.tx_bytes_per_second.map(format_network_rate).unwrap_or_else(|| "N/B".to_owned()), "accent"),
         ] {
             let item = gtk::Box::new(Orientation::Vertical, 3);
             let label = gtk::Label::new(Some(caption));
@@ -2000,4 +2000,19 @@ fn format_bytes(bytes: u64) -> String {
 fn format_rate(bytes_per_second: f64) -> String {
     let megabits_per_second = bytes_per_second.max(0.0) * 8.0 / 1_000_000.0;
     format!("{megabits_per_second:8.2} Mb/s")
+}
+
+// The focused network page uses adaptive SI bit-rate units. The overview keeps
+// its fixed unit to avoid distracting width changes in the compact card.
+fn format_network_rate(bytes_per_second: f64) -> String {
+    let bits_per_second = bytes_per_second.max(0.0) * 8.0;
+    if bits_per_second >= 1_000_000_000.0 {
+        format!("{:.2} Gb/s", bits_per_second / 1_000_000_000.0)
+    } else if bits_per_second >= 1_000_000.0 {
+        format!("{:.2} Mb/s", bits_per_second / 1_000_000.0)
+    } else if bits_per_second >= 1_000.0 {
+        format!("{:.1} kb/s", bits_per_second / 1_000.0)
+    } else {
+        format!("{:.0} b/s", bits_per_second)
+    }
 }
