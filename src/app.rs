@@ -90,8 +90,10 @@ impl MetricCard {
             let maximum = points.iter().copied().fold(f64::NEG_INFINITY, f64::max);
             let span = (maximum - minimum).max(1.0);
             let padding = (span * 0.18).max(0.5);
-            let scale_min = (minimum - padding).max(0.0);
-            let scale_max = (maximum + padding).min(100.0).max(scale_min + 1.0);
+            // Overview cards show utilization percentages: keep the Y-axis
+            // anchored at 0%, matching the detailed processor charts.
+            let scale_min = 0.0;
+            let scale_max = (maximum + padding).min(100.0).max(1.0);
             let scale_span = scale_max - scale_min;
 
             context.select_font_face("Sans", gtk::cairo::FontSlant::Normal, gtk::cairo::FontWeight::Normal);
