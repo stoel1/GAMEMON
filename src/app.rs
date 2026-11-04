@@ -871,7 +871,10 @@ fn render_snapshot(
             let active = network.interfaces.iter().filter(|interface| interface.carrier == Some(true) || interface.operational_state.as_deref() == Some("up")).collect::<Vec<_>>();
             let rx = active.iter().filter_map(|interface| interface.rx_bytes_per_second).sum::<f64>();
             let tx = active.iter().filter_map(|interface| interface.tx_bytes_per_second).sum::<f64>();
-            set_label_text_if_changed(&network_card.primary, &format!("↓ {}  ↑ {}", format_rate(rx), format_rate(tx)));
+            set_label_text_if_changed(
+                &network_card.primary,
+                &format!("↓ {}  ↑ {}", format_rate(rx), format_rate(tx)),
+            );
             set_label_text_if_changed(&network_card.secondary, &format!("{} interfaces · {} actief", network.interfaces.len(), active.len()));
             set_metric_details(&network_card.details, &active.iter().take(3).map(|interface| {
                 format!("{} · ↓ {} · ↑ {}", interface.name, format_rate(interface.rx_bytes_per_second.unwrap_or(0.0)), format_rate(interface.tx_bytes_per_second.unwrap_or(0.0)))
@@ -1424,12 +1427,9 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
-fn format_rate(bytes: f64) -> String {
-    if bytes >= 1_048_576.0 {
-        format!("{:.1} MiB/s", bytes / 1_048_576.0)
-    } else if bytes >= 1024.0 {
-        format!("{:.1} KiB/s", bytes / 1024.0)
-    } else {
-        format!("{bytes:.0} B/s")
-    }
+// Keep network throughput in one fixed unit so the overview labels do not
+// jump in width whenever traffic crosses a B/KiB/MiB threshold.
+fn format_rate(bytes_per_second: f64) -> String {
+    let megabits_per_second = bytes_per_second.max(0.0) * 8.0 / 1_000_000.0;
+    format!("{megabits_per_second:8.2} Mb/s")
 }
