@@ -13,7 +13,7 @@ use crate::{
 };
 
 const UI_POLL_INTERVAL: Duration = Duration::from_millis(100);
-const GRAPH_SAMPLE_INTERVAL: Duration = Duration::from_millis(500);
+const GRAPH_SAMPLE_INTERVAL: Duration = Duration::from_millis(100);
 
 thread_local! {
     // Graph history advances at a fixed cadence, independently of hardware polling.
