@@ -1,5 +1,5 @@
 use std::{
-    sync::mpsc::{self, Receiver, SyncSender, TrySendError},
+    sync::{Arc, mpsc::{self, Receiver, SyncSender, TrySendError}},
     thread,
     time::{Duration, Instant, SystemTime},
 };
@@ -31,7 +31,7 @@ pub struct MonitorSnapshot {
     pub network: Option<network::NetworkSnapshot>,
     pub system: system::SystemSnapshot,
     pub storage: storage::StorageSnapshot,
-    pub processes: process::ProcessListSnapshot,
+    pub processes: Arc<process::ProcessListSnapshot>,
 }
 
 #[derive(Default)]
@@ -42,7 +42,7 @@ struct Collectors {
     storage: storage::StorageCollector,
     processes: process::ProcessCollector,
     last_process_sample: Option<Instant>,
-    process_snapshot: process::ProcessListSnapshot,
+    process_snapshot: Arc<process::ProcessListSnapshot>,
 }
 
 impl Collectors {
@@ -54,11 +54,11 @@ impl Collectors {
         let system = system::sample();
         let storage = self.storage.sample();
         let now = Instant::now();
-        if self.last_process_sample.is_none_or(|last| now.duration_since(last) >= PROCESS_SAMPLE_INTERVAL) {
-            self.process_snapshot = self.processes.sample();
+        if self.last_process_sample.map_or(true, |last| now.duration_since(last) >= PROCESS_SAMPLE_INTERVAL) {
+            self.process_snapshot = Arc::new(self.processes.sample());
             self.last_process_sample = Some(now);
         }
-        let processes = self.process_snapshot.clone();
+        let processes = Arc::clone(&self.process_snapshot);
         MonitorSnapshot {
             sampled_at: SystemTime::now(),
             cpu,
