@@ -1444,7 +1444,6 @@ fn set_network_detail(container: &gtk::Box, network: &network::NetworkSnapshot) 
             let number = gtk::Label::new(Some(&value.to_string()));
             number.set_halign(Align::Start);
             number.add_css_class("numeric");
-            if value > 0 { number.add_css_class("warning"); }
             item.append(&caption);
             item.append(&number);
             errors.append(&item);
