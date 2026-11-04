@@ -1,5 +1,5 @@
 use std::{
-    sync::{Arc, mpsc::{self, Receiver, SyncSender, TrySendError}},
+    sync::{Arc, atomic::{AtomicU64, Ordering}, mpsc::{self, Receiver, SyncSender, TrySendError}},
     thread,
     time::{Duration, Instant, SystemTime},
 };
@@ -12,6 +12,18 @@ const PROCESS_SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone, Copy)]
 pub struct SamplerConfig {
     pub interval: Duration,
+}
+
+#[derive(Clone)]
+pub struct SamplerControl {
+    interval_ms: Arc<AtomicU64>,
+}
+
+impl SamplerControl {
+    pub fn set_interval(&self, interval: Duration) {
+        let milliseconds = interval.as_millis().clamp(100, 60_000) as u64;
+        self.interval_ms.store(milliseconds, Ordering::Relaxed);
+    }
 }
 
 impl Default for SamplerConfig {
@@ -72,19 +84,21 @@ impl Collectors {
     }
 }
 
-pub fn start(config: SamplerConfig) -> Receiver<MonitorSnapshot> {
+pub fn start(config: SamplerConfig) -> (Receiver<MonitorSnapshot>, SamplerControl) {
     let (sender, receiver) = mpsc::sync_channel(1);
-    let interval = config.interval.max(MINIMUM_INTERVAL);
+    let initial_ms = config.interval.max(MINIMUM_INTERVAL).as_millis().clamp(100, 60_000) as u64;
+    let interval_ms = Arc::new(AtomicU64::new(initial_ms));
+    let control = SamplerControl { interval_ms: Arc::clone(&interval_ms) };
     if let Err(error) = thread::Builder::new()
         .name("gamemon-sampler".to_owned())
-        .spawn(move || run_sampler(sender, interval))
+        .spawn(move || run_sampler(sender, interval_ms))
     {
         tracing::error!(%error, "could not start hardware sampling thread");
     }
-    receiver
+    (receiver, control)
 }
 
-fn run_sampler(sender: SyncSender<MonitorSnapshot>, interval: Duration) {
+fn run_sampler(sender: SyncSender<MonitorSnapshot>, interval_ms: Arc<AtomicU64>) {
     let mut collectors = Collectors::default();
     loop {
         let cycle_started = Instant::now();
@@ -93,6 +107,7 @@ fn run_sampler(sender: SyncSender<MonitorSnapshot>, interval: Duration) {
             Ok(()) | Err(TrySendError::Full(_)) => {}
             Err(TrySendError::Disconnected(_)) => break,
         }
+        let interval = Duration::from_millis(interval_ms.load(Ordering::Relaxed));
         thread::sleep(interval.saturating_sub(cycle_started.elapsed()));
     }
 }
@@ -120,7 +135,7 @@ mod tests {
 
     #[test]
     fn background_sampler_delivers_a_snapshot() {
-        let receiver = start(SamplerConfig::default());
+        let (receiver, _control) = start(SamplerConfig::default());
         let snapshot = receiver
             .recv_timeout(Duration::from_secs(5))
             .expect("sampler should deliver a snapshot");
