@@ -176,12 +176,14 @@ impl MetricCard {
         let details = gtk::Box::new(Orientation::Vertical, 5);
         details.set_hexpand(true);
         details.set_vexpand(false);
+        details.set_size_request(-1, 66);
         // Keep a fixed three-row widget structure. Updating label text instead
         // of recreating rows prevents GTK from renegotiating card sizes each poll.
         for _ in 0..3 {
             let row = gtk::Box::new(Orientation::Horizontal, 8);
             row.set_hexpand(true);
             row.set_halign(Align::Fill);
+            row.set_size_request(-1, 20);
             let label = gtk::Label::new(None);
             label.set_halign(Align::Start);
             label.set_xalign(0.0);
@@ -218,6 +220,8 @@ impl MetricCard {
         frame.set_valign(Align::Start);
         frame.set_size_request(-1, 330);
         frame.set_height_request(330);
+        container.set_size_request(-1, 294);
+        details.set_valign(Align::Start);
 
         // Sleepbare onderrand om de kaart individueel hoger of lager te maken.
         let resize_grip = gtk::Button::with_label("⠿  Sleep om kaart te vergroten/verkleinen");
@@ -306,7 +310,8 @@ impl MetricCard {
             self.target_usage.set(0.0);
             self.displayed_usage.set(0.0);
             self.progress.set_fraction(0.0);
-            self.chart.set_visible(false);
+            // Keep the chart allocated even when telemetry is temporarily unavailable.
+            self.chart.set_visible(true);
         }
     }
 }
