@@ -13,6 +13,7 @@ use crate::{
 };
 
 const UI_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const CHART_FRAME_INTERVAL: Duration = Duration::from_millis(33);
 
 struct MetricCard {
     primary: gtk::Label,
@@ -265,7 +266,7 @@ impl MetricCard {
         let weak_chart = chart.downgrade();
         let animated = Rc::clone(&displayed_usage);
         let target = Rc::clone(&target_usage);
-        gtk::glib::timeout_add_local(Duration::from_millis(16), move || {
+        gtk::glib::timeout_add_local(CHART_FRAME_INTERVAL, move || {
             let (Some(progress), Some(chart)) = (weak_progress.upgrade(), weak_chart.upgrade()) else {
                 return gtk::glib::ControlFlow::Break;
             };
@@ -274,8 +275,12 @@ impl MetricCard {
             let difference = destination - current;
             let next = if difference.abs() < 0.05 { destination } else { current + difference * 0.22 };
             animated.set(next);
-            progress.set_fraction(next / 100.0);
-            chart.queue_draw();
+            if (next - current).abs() >= 0.05 || (next - destination).abs() < 0.05 {
+                progress.set_fraction(next / 100.0);
+                if chart.is_mapped() {
+                    chart.queue_draw();
+                }
+            }
             gtk::glib::ControlFlow::Continue
         });
 
@@ -664,9 +669,9 @@ fn render_snapshot(
     // Linux topology core_type: 2 = Core/P-core, 1 = Atom/E-core.
     push_detail_sample(detail_charts, "cpu_p", average_core_usage(2));
     push_detail_sample(detail_charts, "cpu_e", average_core_usage(1));
-    cpu_card.primary.set_text(&format_cpu_utilization(cpu.utilization));
+    set_label_text_if_changed(&cpu_card.primary, &format_cpu_utilization(cpu.utilization));
     cpu_card.set_usage(cpu_usage);
-    cpu_card.secondary.set_text(cpu.model.as_deref().unwrap_or("CPU-model niet beschikbaar"));
+    set_label_text_if_changed(&cpu_card.secondary, cpu.model.as_deref().unwrap_or("CPU-model niet beschikbaar"));
     let average_frequency = average_cpu_frequency(cpu);
     let mut power_by_domain = std::collections::BTreeMap::<String, f64>::new();
     for domain in &cpu.package_power_domains {
@@ -694,9 +699,9 @@ fn render_snapshot(
             push_detail_sample(detail_charts, "gpu", usage);
             push_detail_sample(detail_charts, "gpu_power", device.power_milliwatts.map(|value| value as f64 / 1000.0));
             push_detail_sample(detail_charts, "gpu_vram", device.vram_used_bytes.map(|value| value as f64 / 1_073_741_824.0));
-            gpu_card.primary.set_text(&usage.map(|value| format!("{value:.0}%")).unwrap_or_else(|| "N/B".to_owned()));
+            set_label_text_if_changed(&gpu_card.primary, &usage.map(|value| format!("{value:.0}%")).unwrap_or_else(|| "N/B".to_owned()));
             gpu_card.set_usage(usage);
-            gpu_card.secondary.set_text(name);
+            set_label_text_if_changed(&gpu_card.secondary, name);
             let vram = match (device.vram_used_bytes, device.vram_total_bytes) {
                 (Some(used), Some(total)) => format!("VRAM {} / {}", format_bytes(used), format_bytes(total)),
                 _ => "VRAM niet beschikbaar".to_owned(),
@@ -707,14 +712,14 @@ fn render_snapshot(
             set_metric_details(&gpu_card.details, &format!("Temperatuur: {temperature} · Vermogen: {power}\n{vram} · Core clock: {clocks}\n{} GPU(s) gedetecteerd", gpu.devices.len()));
         }
         Some(_) => {
-            gpu_card.primary.set_text("Geen GPU");
-            gpu_card.secondary.set_text("Geen grafische apparaten gevonden");
+            set_label_text_if_changed(&gpu_card.primary, "Geen GPU");
+            set_label_text_if_changed(&gpu_card.secondary, "Geen grafische apparaten gevonden");
             set_metric_details(&gpu_card.details, "Controleer of de kernel DRM-apparaten beschikbaar stelt.");
             gpu_card.set_usage(None);
         }
         None => {
-            gpu_card.primary.set_text("N/B");
-            gpu_card.secondary.set_text("GPU-telemetrie niet beschikbaar");
+            set_label_text_if_changed(&gpu_card.primary, "N/B");
+            set_label_text_if_changed(&gpu_card.secondary, "GPU-telemetrie niet beschikbaar");
             set_metric_details(&gpu_card.details, "Er kon geen GPU-informatie worden verzameld.");
             gpu_card.set_usage(None);
         }
@@ -727,10 +732,10 @@ fn render_snapshot(
         (Some(used), Some(total)) => Some((used as f64 / total as f64) * 100.0),
         _ => None,
     };
-    memory_card.primary.set_text(&memory_percent.map(|value| format!("{value:.1}%")).unwrap_or_else(|| "N/B".to_owned()));
+    set_label_text_if_changed(&memory_card.primary, &memory_percent.map(|value| format!("{value:.1}%")).unwrap_or_else(|| "N/B".to_owned()));
     push_detail_sample(detail_charts, "memory", memory_percent);
     memory_card.set_usage(memory_percent);
-    memory_card.secondary.set_text(&format!(
+    set_label_text_if_changed(&memory_card.secondary, &format!(
         "{} gebruikt van {}",
         used.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
         total.map(format_bytes).unwrap_or_else(|| "N/B".to_owned())
@@ -750,25 +755,25 @@ fn render_snapshot(
     let uptime = system.uptime_seconds.map(format_uptime).unwrap_or_else(|| "Niet beschikbaar".to_owned());
     push_detail_sample(detail_charts, "system", system.load_average.map(|v| v[0]));
     let load = system.load_average.map(|values| format!("{:.2} · {:.2} · {:.2}", values[0], values[1], values[2])).unwrap_or_else(|| "Niet beschikbaar".to_owned());
-    system_card.primary.set_text(&uptime);
-    system_card.secondary.set_text("Systeem actief");
+    set_label_text_if_changed(&system_card.primary, &uptime);
+    set_label_text_if_changed(&system_card.secondary, "Systeem actief");
     set_metric_details(&system_card.details, &format!("Load average (1 / 5 / 15 min): {load}"));
     system_card.set_usage(None);
 
     let hottest_temperature = system.temperatures.iter().map(|v| v.celsius).reduce(f64::max);
     push_detail_sample(detail_charts, "motherboard", hottest_temperature);
     if system.temperatures.is_empty() && system.fans.is_empty() {
-        sensors_card.primary.set_text("Geen sensoren");
-        sensors_card.secondary.set_text("Geen hwmon-metingen beschikbaar");
+        set_label_text_if_changed(&sensors_card.primary, "Geen sensoren");
+        set_label_text_if_changed(&sensors_card.secondary, "Geen hwmon-metingen beschikbaar");
         set_metric_details(&sensors_card.details, "Controleer of de kernel temperatuur- en fanwaarden via /sys/class/hwmon exporteert.");
     } else {
         let hottest = system.temperatures.iter().max_by(|left, right| left.celsius.total_cmp(&right.celsius));
         if let Some(reading) = hottest {
-            sensors_card.primary.set_text(&format!("{:.1} °C", reading.celsius));
-            sensors_card.secondary.set_text(&format!("Hoogste temperatuur · {}", reading.label));
+            set_label_text_if_changed(&sensors_card.primary, &format!("{:.1} °C", reading.celsius));
+            set_label_text_if_changed(&sensors_card.secondary, &format!("Hoogste temperatuur · {}", reading.label));
         } else {
-            sensors_card.primary.set_text(&format!("{} fans", system.fans.len()));
-            sensors_card.secondary.set_text("Ventilatorsnelheden");
+            set_label_text_if_changed(&sensors_card.primary, &format!("{} fans", system.fans.len()));
+            set_label_text_if_changed(&sensors_card.secondary, "Ventilatorsnelheden");
         }
         let temperatures = system.temperatures.iter().take(3).map(|reading| format!("{}: {:.1} °C", reading.label, reading.celsius)).collect::<Vec<_>>();
         let fans = system.fans.iter().take(3).map(|reading| format!("{}: {} RPM", reading.label, reading.rpm)).collect::<Vec<_>>();
@@ -782,11 +787,11 @@ fn render_snapshot(
     let total_capacity = filesystems.iter().filter_map(|fs| fs.total_bytes).sum::<u64>();
     let total_used = filesystems.iter().filter_map(|fs| fs.used_bytes).sum::<u64>();
     if filesystems.is_empty() {
-        storage_card.primary.set_text("Geen bestandssystemen");
-        storage_card.secondary.set_text("Opslaginformatie niet beschikbaar");
+        set_label_text_if_changed(&storage_card.primary, "Geen bestandssystemen");
+        set_label_text_if_changed(&storage_card.secondary, "Opslaginformatie niet beschikbaar");
     } else {
-        storage_card.primary.set_text(&format!("{} bestandssystemen", filesystems.len()));
-        storage_card.secondary.set_text(&format!("{} gebruikt van {}", format_bytes(total_used), format_bytes(total_capacity)));
+        set_label_text_if_changed(&storage_card.primary, &format!("{} bestandssystemen", filesystems.len()));
+        set_label_text_if_changed(&storage_card.secondary, &format!("{} gebruikt van {}", format_bytes(total_used), format_bytes(total_capacity)));
     }
     let mounts = filesystems.iter().take(4).map(|fs| {
         let used = fs.used_bytes.zip(fs.total_bytes.filter(|total| *total > 0))
@@ -814,8 +819,8 @@ fn render_snapshot(
     let processes = &snapshot.processes.processes;
     let process_cpu = processes.iter().filter_map(|p| p.cpu_percent).sum::<f64>();
     push_detail_sample(detail_charts, "processes", Some(process_cpu));
-    process_card.primary.set_text(&format!("{} processen", processes.len()));
-    process_card.secondary.set_text("Gerangschikt op CPU-gebruik");
+    set_label_text_if_changed(&process_card.primary, &format!("{} processen", processes.len()));
+    set_label_text_if_changed(&process_card.secondary, "Gerangschikt op CPU-gebruik");
     let process_lines = processes.iter().take(6).map(|process| format!(
         "{:>6}  {:>5}  {:>7}  {}",
         process.pid,
@@ -838,22 +843,22 @@ fn render_snapshot(
             let active = network.interfaces.iter().filter(|interface| interface.carrier == Some(true) || interface.operational_state.as_deref() == Some("up")).collect::<Vec<_>>();
             let rx = active.iter().filter_map(|interface| interface.rx_bytes_per_second).sum::<f64>();
             let tx = active.iter().filter_map(|interface| interface.tx_bytes_per_second).sum::<f64>();
-            network_card.primary.set_text(&format!("↓ {}  ↑ {}", format_rate(rx), format_rate(tx)));
-            network_card.secondary.set_text(&format!("{} interfaces · {} actief", network.interfaces.len(), active.len()));
+            set_label_text_if_changed(&network_card.primary, &format!("↓ {}  ↑ {}", format_rate(rx), format_rate(tx)));
+            set_label_text_if_changed(&network_card.secondary, &format!("{} interfaces · {} actief", network.interfaces.len(), active.len()));
             set_metric_details(&network_card.details, &active.iter().take(3).map(|interface| {
                 format!("{} · ↓ {} · ↑ {}", interface.name, format_rate(interface.rx_bytes_per_second.unwrap_or(0.0)), format_rate(interface.tx_bytes_per_second.unwrap_or(0.0)))
             }).collect::<Vec<_>>().join("\n"));
             network_card.set_usage(None);
         }
         Some(_) => {
-            network_card.primary.set_text("Geen interfaces");
-            network_card.secondary.set_text("Geen netwerkinterfaces gevonden");
+            set_label_text_if_changed(&network_card.primary, "Geen interfaces");
+            set_label_text_if_changed(&network_card.secondary, "Geen netwerkinterfaces gevonden");
             set_metric_details(&network_card.details, "Netwerkdetails zijn niet beschikbaar.");
             network_card.set_usage(None);
         }
         None => {
-            network_card.primary.set_text("N/B");
-            network_card.secondary.set_text("Netwerktelemetrie niet beschikbaar");
+            set_label_text_if_changed(&network_card.primary, "N/B");
+            set_label_text_if_changed(&network_card.secondary, "Netwerktelemetrie niet beschikbaar");
             set_metric_details(&network_card.details, "Er kon geen netwerk-informatie worden verzameld.");
             network_card.set_usage(None);
         }
@@ -984,6 +989,13 @@ fn render_snapshot(
 
 
 
+
+
+fn set_label_text_if_changed(label: &gtk::Label, value: &str) {
+    if label.text().as_str() != value {
+        label.set_text(value);
+    }
+}
 
 fn set_metric_details(container: &gtk::Box, text: &str) {
     let lines = text.lines()
@@ -1150,7 +1162,9 @@ fn push_detail_sample(
         if values.len() == 60 { values.pop_front(); }
         values.push_back(value);
         drop(values);
-        chart.queue_draw();
+        if chart.is_mapped() {
+            chart.queue_draw();
+        }
     }
 }
 fn set_detail_if_visible(
