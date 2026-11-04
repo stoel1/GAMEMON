@@ -5,7 +5,7 @@ use adw::{Application, ApplicationWindow, HeaderBar, ToolbarView};
 use gtk::{Align, Orientation};
 
 use crate::{
-    collectors::{cpu, storage},
+    collectors::{cpu, network, storage},
     core::{
         config::AppConfig,
         sampler::{self, MonitorSnapshot, SamplerConfig},
@@ -1263,19 +1263,23 @@ fn render_snapshot(
     )).collect::<Vec<_>>().join("\n");
     set_detail_if_visible(detail_labels, detail_expanded, visible_page, "processes", &format!("# Actieve processen · {}\n{}", snapshot.processes.processes.len(), if process_text.is_empty() { "Geen processen beschikbaar" } else { &process_text }));
 
-    let network_text = snapshot.network.as_ref().map(|n| n.interfaces.iter().map(|i| format!(
-        "# Interface {}\nStatus: {}\nCarrier: {}\nLinksnelheid: {}\nDuplex: {}\nOntvangen: {}\nVerzonden: {}\nTotaal ontvangen: {}\nTotaal verzonden: {}\nRX-fouten: {}\nTX-fouten: {}\nRX-drops: {}\nTX-drops: {}",
-        i.name, i.operational_state.as_deref().unwrap_or("N/B"),
-        i.carrier.map(|v| if v { "ja" } else { "nee" }).unwrap_or("N/B"),
-        i.speed_mbps.map(|v| format!("{v} Mbps")).unwrap_or_else(|| "N/B".to_owned()),
-        i.duplex.as_deref().unwrap_or("N/B"),
-        i.rx_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()),
-        i.tx_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()),
-        i.rx_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
-        i.tx_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
-        i.rx_errors.unwrap_or(0), i.tx_errors.unwrap_or(0), i.rx_dropped.unwrap_or(0), i.tx_dropped.unwrap_or(0)
-    )).collect::<Vec<_>>().join("\n\n")).unwrap_or_else(|| "# Netwerk\nNetwerkgegevens niet beschikbaar".to_owned());
-    set_detail_if_visible(detail_labels, detail_expanded, visible_page, "network", &network_text);
+    let network_snapshot = snapshot.network.as_ref();
+    let total_rx = network_snapshot.map(|n| n.interfaces.iter().filter_map(|i| i.rx_bytes_per_second).sum::<f64>());
+    let total_tx = network_snapshot.map(|n| n.interfaces.iter().filter_map(|i| i.tx_bytes_per_second).sum::<f64>());
+    let total_rate_mib = match (total_rx, total_tx) {
+        (Some(rx), Some(tx)) => Some((rx + tx) / 1_048_576.0),
+        _ => None,
+    };
+    push_detail_sample(detail_charts, "network", total_rate_mib);
+    if visible_page == "network" {
+        if let Some(container) = detail_labels.get("network") {
+            if let Some(network) = network_snapshot {
+                set_network_detail(container, network);
+            } else {
+                set_network_unavailable(container);
+            }
+        }
+    }
 
     set_detail_if_visible(detail_labels, detail_expanded, visible_page, "system", &format!(
         "# Systeemstatus\nUptime: {}\n\n# Load average\n1 minuut: {}\n5 minuten: {}\n15 minuten: {}",
@@ -1290,6 +1294,142 @@ fn render_snapshot(
 
 
 
+
+
+fn network_section(title: &str) -> (gtk::Frame, gtk::Box) {
+    let frame = gtk::Frame::new(None);
+    frame.add_css_class("card");
+    frame.set_hexpand(true);
+    let content = gtk::Box::new(Orientation::Vertical, 10);
+    content.set_margin_top(14);
+    content.set_margin_bottom(14);
+    content.set_margin_start(16);
+    content.set_margin_end(16);
+    let heading = gtk::Label::new(Some(title));
+    heading.set_halign(Align::Start);
+    heading.add_css_class("title-3");
+    content.append(&heading);
+    frame.set_child(Some(&content));
+    (frame, content)
+}
+
+fn network_value_row(container: &gtk::Box, label_text: &str, value_text: &str) {
+    let row = gtk::Box::new(Orientation::Horizontal, 12);
+    row.set_hexpand(true);
+    let label = gtk::Label::new(Some(label_text));
+    label.set_halign(Align::Start);
+    label.set_hexpand(true);
+    label.set_xalign(0.0);
+    label.add_css_class("dim-label");
+    let value = gtk::Label::new(Some(value_text));
+    value.set_halign(Align::End);
+    value.set_xalign(1.0);
+    value.set_selectable(true);
+    value.add_css_class("numeric");
+    row.append(&label);
+    row.append(&value);
+    container.append(&row);
+}
+
+fn set_network_unavailable(container: &gtk::Box) {
+    while let Some(child) = container.first_child() { container.remove(&child); }
+    let (frame, content) = network_section("Netwerkinterfaces");
+    let label = gtk::Label::new(Some("Netwerkgegevens niet beschikbaar"));
+    label.set_halign(Align::Start);
+    label.add_css_class("dim-label");
+    content.append(&label);
+    container.append(&frame);
+}
+
+fn set_network_detail(container: &gtk::Box, network: &network::NetworkSnapshot) {
+    while let Some(child) = container.first_child() { container.remove(&child); }
+
+    if network.interfaces.is_empty() {
+        set_network_unavailable(container);
+        return;
+    }
+
+    let (summary_frame, summary) = network_section("Verkeer in totaal");
+    let rx = network.interfaces.iter().filter_map(|i| i.rx_bytes_per_second).sum::<f64>();
+    let tx = network.interfaces.iter().filter_map(|i| i.tx_bytes_per_second).sum::<f64>();
+    let stats = gtk::Box::new(Orientation::Horizontal, 24);
+    stats.set_homogeneous(true);
+    for (title, value, arrow) in [
+        ("Ontvangen", format_rate(rx), "↓"),
+        ("Verzonden", format_rate(tx), "↑"),
+    ] {
+        let item = gtk::Box::new(Orientation::Vertical, 4);
+        let caption = gtk::Label::new(Some(title));
+        caption.set_halign(Align::Start);
+        caption.add_css_class("dim-label");
+        let amount = gtk::Label::new(Some(&format!("{arrow} {value}")));
+        amount.set_halign(Align::Start);
+        amount.add_css_class("title-2");
+        amount.add_css_class("numeric");
+        item.append(&caption);
+        item.append(&amount);
+        stats.append(&item);
+    }
+    summary.append(&stats);
+    let interface_count = gtk::Label::new(Some(&format!("{} interfaces · {} actief",
+        network.interfaces.len(),
+        network.interfaces.iter().filter(|i| i.carrier == Some(true) || i.operational_state.as_deref() == Some("up")).count()
+    )));
+    interface_count.set_halign(Align::Start);
+    interface_count.add_css_class("dim-label");
+    summary.append(&interface_count);
+    container.append(&summary_frame);
+
+    for interface in &network.interfaces {
+        let (frame, content) = network_section(&format!("Interface · {}", interface.name));
+        let status = format!("{} · carrier {} · {} · {}",
+            interface.operational_state.as_deref().unwrap_or("status onbekend"),
+            interface.carrier.map(|v| if v { "aanwezig" } else { "niet aanwezig" }).unwrap_or("onbekend"),
+            interface.speed_mbps.map(|v| format!("{v} Mbps")).unwrap_or_else(|| "snelheid N/B".to_owned()),
+            interface.duplex.as_deref().unwrap_or("duplex N/B")
+        );
+        let status_label = gtk::Label::new(Some(&status));
+        status_label.set_halign(Align::Start);
+        status_label.add_css_class("dim-label");
+        content.append(&status_label);
+
+        let traffic = gtk::Box::new(Orientation::Horizontal, 20);
+        traffic.set_homogeneous(true);
+        for (caption, value, color_class) in [
+            ("Ontvangen", interface.rx_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()), "success"),
+            ("Verzonden", interface.tx_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()), "accent"),
+        ] {
+            let item = gtk::Box::new(Orientation::Vertical, 3);
+            let label = gtk::Label::new(Some(caption));
+            label.set_halign(Align::Start);
+            label.add_css_class("dim-label");
+            let amount = gtk::Label::new(Some(&value));
+            amount.set_halign(Align::Start);
+            amount.add_css_class("title-3");
+            amount.add_css_class("numeric");
+            amount.add_css_class(color_class);
+            item.append(&label);
+            item.append(&amount);
+            traffic.append(&item);
+        }
+        content.append(&traffic);
+
+        let totals = gtk::Box::new(Orientation::Horizontal, 16);
+        totals.set_homogeneous(true);
+        network_value_row(&totals, "Totaal ontvangen", &interface.rx_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()));
+        network_value_row(&totals, "Totaal verzonden", &interface.tx_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()));
+        content.append(&totals);
+
+        let errors = gtk::Box::new(Orientation::Horizontal, 16);
+        errors.set_homogeneous(true);
+        network_value_row(&errors, "RX-fouten", &interface.rx_errors.unwrap_or(0).to_string());
+        network_value_row(&errors, "TX-fouten", &interface.tx_errors.unwrap_or(0).to_string());
+        network_value_row(&errors, "RX-drops", &interface.rx_dropped.unwrap_or(0).to_string());
+        network_value_row(&errors, "TX-drops", &interface.tx_dropped.unwrap_or(0).to_string());
+        content.append(&errors);
+        container.append(&frame);
+    }
+}
 
 fn storage_section(title: &str) -> (gtk::Frame, gtk::Box) {
     let frame = gtk::Frame::new(None);
@@ -1570,7 +1710,7 @@ fn make_detail_chart(unit: &'static str) -> (gtk::DrawingArea, Rc<RefCell<VecDeq
         let padding = ((max - min) * 0.15).max(0.5);
         // Percentages represent utilization and cannot be negative. Anchor
         // these charts at zero so small values never produce a "-0%" axis.
-        let low = if unit == "%" { 0.0 } else { (min - padding).min(0.0) };
+        let low = if matches!(unit, "%" | "MiB/s") { 0.0 } else { (min - padding).min(0.0) };
         let high = (max + padding).max(low + 1.0);
         let span = high - low;
         context.set_line_width(1.0);
