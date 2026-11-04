@@ -1219,7 +1219,6 @@ fn render_snapshot(
         Some(network) if !network.interfaces.is_empty() => {
             let total_rate = network.interfaces.iter().filter_map(|i| i.rx_bytes_per_second).sum::<f64>()
                 + network.interfaces.iter().filter_map(|i| i.tx_bytes_per_second).sum::<f64>();
-            push_detail_sample(detail_charts, "network", Some(total_rate / 1_048_576.0));
             push_detail_sample(detail_charts, "network_rx", Some(network.interfaces.iter().filter_map(|i| i.rx_bytes_per_second).sum::<f64>() / 1_048_576.0));
             push_detail_sample(detail_charts, "network_tx", Some(network.interfaces.iter().filter_map(|i| i.tx_bytes_per_second).sum::<f64>() / 1_048_576.0));
             let active = network.interfaces.iter().filter(|interface| interface.carrier == Some(true) || interface.operational_state.as_deref() == Some("up")).collect::<Vec<_>>();
@@ -1885,15 +1884,15 @@ fn push_detail_sample(
 ) {
     let Some((chart, history)) = charts.get(key) else { return };
     if GRAPH_SAMPLE_DUE.with(Cell::get) {
-      if let Some(value) = value.filter(|v| v.is_finite()) {
-        let mut values = history.borrow_mut();
-        if values.len() == 60 { values.pop_front(); }
-        values.push_back(value);
-        drop(values);
-        if chart.is_mapped() {
-            chart.queue_draw();
+        if let Some(value) = value.filter(|v| v.is_finite()) {
+            let mut values = history.borrow_mut();
+            if values.len() == 60 { values.pop_front(); }
+            values.push_back(value);
+            drop(values);
+            if chart.is_mapped() {
+                chart.queue_draw();
+            }
         }
-      }
     }
 }
 fn set_detail_if_visible(
