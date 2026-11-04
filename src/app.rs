@@ -218,14 +218,14 @@ impl MetricCard {
         frame.set_vexpand(false);
         frame.set_valign(Align::Start);
         let initial_height = match title {
-            "SYSTEEM" => 270,
-            "SENSOREN" => 310,
-            "GEHEUGEN" => 320,
-            "PROCESSEN" => 350,
-            "PROCESSOR" => 360,
-            "GRAPHICS" => 380,
-            "NETWERK" => 390,
-            "OPSLAG" => 400,
+            "SYSTEEM" => 330,
+            "SENSOREN" => 350,
+            "GEHEUGEN" => 360,
+            "PROCESSEN" => 380,
+            "PROCESSOR" => 390,
+            "GRAPHICS" => 410,
+            "NETWERK" => 430,
+            "OPSLAG" => 450,
             _ => 330,
         };
         frame.set_size_request(-1, initial_height);
@@ -261,11 +261,16 @@ impl MetricCard {
         });
         let start_for_update = Rc::clone(&start_height);
         let weak_frame = frame.downgrade();
+        let weak_container = container.downgrade();
         drag.connect_drag_update(move |_, _, offset_y| {
+            let height = (start_for_update.get() + offset_y.round() as i32).clamp(260, 900);
             if let Some(frame) = weak_frame.upgrade() {
-                let height = (start_for_update.get() + offset_y.round() as i32).clamp(260, 900);
                 frame.set_size_request(-1, height);
                 frame.queue_resize();
+            }
+            if let Some(container) = weak_container.upgrade() {
+                container.set_size_request(-1, height - 36);
+                container.queue_resize();
             }
         });
         resize_grip.add_controller(drag);
@@ -313,14 +318,14 @@ impl MetricCard {
             context.set_font_size(11.0);
 
             if kind == "storage" {
-                let total = values.iter().map(|(_, value)| value.max(0.0)).sum::<f64>();
+                let total = values.iter().map(|(_, value)| (*value).max(0.0)).sum::<f64>();
                 if total <= 0.0 { return; }
                 let center_x = 76.0;
                 let center_y = f64::from(height) / 2.0;
                 let radius = 57.0;
                 let mut angle = -std::f64::consts::FRAC_PI_2;
                 for (index, (_, value)) in values.iter().enumerate() {
-                    let fraction = value.max(0.0) / total;
+                    let fraction = (*value).max(0.0) / total;
                     if fraction <= 0.0 { continue; }
                     let next = angle + fraction * std::f64::consts::TAU;
                     let (red, green, blue) = palette[index % palette.len()];
@@ -354,7 +359,7 @@ impl MetricCard {
                 return;
             }
 
-            let max_value = values.iter().map(|(_, value)| value.max(0.0)).fold(0.0_f64, f64::max).max(1.0);
+            let max_value = values.iter().map(|(_, value)| (*value).max(0.0)).fold(0.0_f64, f64::max).max(1.0);
             let row_height = (f64::from(height) - 12.0) / values.len() as f64;
             let label_width = if kind == "sensors" { 150.0 } else { 125.0 };
             let bar_left = label_width;
@@ -369,7 +374,7 @@ impl MetricCard {
                 context.rectangle(bar_left, y + 3.0, bar_right - bar_left, 9.0);
                 let _ = context.fill();
                 context.set_source_rgb(red, green, blue);
-                context.rectangle(bar_left, y + 3.0, (bar_right - bar_left) * (value.max(0.0) / max_value).clamp(0.0, 1.0), 9.0);
+                context.rectangle(bar_left, y + 3.0, (bar_right - bar_left) * ((*value).max(0.0) / max_value).clamp(0.0, 1.0), 9.0);
                 let _ = context.fill();
                 context.set_source_rgba(0.86, 0.87, 0.89, 1.0);
                 context.move_to(bar_right + 8.0, y + row_height * 0.68);
@@ -1026,6 +1031,8 @@ fn render_snapshot(
     let hottest_temperature = system.temperatures.iter().map(|v| v.celsius).reduce(f64::max);
     push_detail_sample(detail_charts, "motherboard", hottest_temperature);
     if system.temperatures.is_empty() && system.fans.is_empty() {
+        sensors_card.overview_data.borrow_mut().clear();
+        if sensors_card.chart.is_mapped() { sensors_card.chart.queue_draw(); }
         set_label_text_if_changed(&sensors_card.primary, "Geen sensoren");
         set_label_text_if_changed(&sensors_card.secondary, "Geen hwmon-metingen beschikbaar");
         set_metric_details(&sensors_card.details, "Controleer of de kernel temperatuur- en fanwaarden via /sys/class/hwmon exporteert.");
