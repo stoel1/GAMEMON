@@ -23,6 +23,7 @@ struct MetricCard {
     target_usage: Rc<Cell<f64>>,
     animation_active: Rc<Cell<bool>>,
     network_history: Rc<RefCell<VecDeque<(f64, f64)>>>,
+    overview_data: Rc<RefCell<Vec<(String, f64)>>>,
     chart: gtk::DrawingArea,
     details: gtk::Box,
 }
@@ -79,6 +80,7 @@ impl MetricCard {
         let target_usage = Rc::new(Cell::new(0.0));
         let animation_active = Rc::new(Cell::new(false));
         let network_history = Rc::new(RefCell::new(VecDeque::<(f64, f64)>::with_capacity(600)));
+        let overview_data = Rc::new(RefCell::new(Vec::<(String, f64)>::new()));
         let chart_history = Rc::clone(&history);
         let chart_displayed = Rc::clone(&displayed_usage);
         chart.set_draw_func(move |_, context, width, height| {
@@ -215,9 +217,20 @@ impl MetricCard {
         frame.set_hexpand(true);
         frame.set_vexpand(false);
         frame.set_valign(Align::Start);
-        frame.set_size_request(-1, 330);
-        frame.set_height_request(330);
-        container.set_size_request(-1, 294);
+        let initial_height = match title {
+            "SYSTEEM" => 270,
+            "SENSOREN" => 310,
+            "GEHEUGEN" => 320,
+            "PROCESSEN" => 350,
+            "PROCESSOR" => 360,
+            "GRAPHICS" => 380,
+            "NETWERK" => 390,
+            "OPSLAG" => 400,
+            _ => 330,
+        };
+        frame.set_size_request(-1, initial_height);
+        frame.set_height_request(initial_height);
+        container.set_size_request(-1, initial_height - 36);
         details.set_valign(Align::Start);
 
         // Sleepbare onderrand om de kaart individueel hoger of lager te maken.
@@ -237,13 +250,13 @@ impl MetricCard {
         // label can lose pointer events to surrounding widgets in GTK layouts.
         let drag = gtk::GestureDrag::new();
         drag.set_propagation_phase(gtk::PropagationPhase::Capture);
-        let start_height = Rc::new(Cell::new(330i32));
+        let start_height = Rc::new(Cell::new(initial_height));
         let start_for_begin = Rc::clone(&start_height);
         let weak_frame = frame.downgrade();
         drag.connect_drag_begin(move |_, _, _| {
             if let Some(frame) = weak_frame.upgrade() {
                 let height = frame.height();
-                start_for_begin.set(if height > 0 { height } else { 330 });
+                start_for_begin.set(if height > 0 { height } else { initial_height });
             }
         });
         let start_for_update = Rc::clone(&start_height);
@@ -268,10 +281,101 @@ impl MetricCard {
                 target_usage,
                 animation_active,
                 network_history,
+                overview_data,
                 chart,
                 details,
             },
         )
+    }
+
+    fn configure_summary_chart(&self, kind: &'static str) {
+        let height = match kind {
+            "storage" => 170,
+            "sensors" | "processes" => 145,
+            _ => 112,
+        };
+        self.chart.set_content_height(height);
+        self.chart.set_size_request(-1, height);
+        let data = Rc::clone(&self.overview_data);
+        self.chart.set_draw_func(move |_, context, width, height| {
+            let values = data.borrow();
+            if values.is_empty() || width < 160 || height < 70 { return; }
+
+            let palette = [
+                (0.26, 0.72, 0.96),
+                (0.25, 0.82, 0.58),
+                (0.95, 0.68, 0.30),
+                (0.70, 0.55, 0.95),
+                (0.90, 0.48, 0.48),
+            ];
+            context.select_font_face("Sans", gtk::cairo::FontSlant::Normal, gtk::cairo::FontWeight::Normal);
+            context.set_font_size(11.0);
+
+            if kind == "storage" {
+                let total = values.iter().map(|(_, value)| value.max(0.0)).sum::<f64>();
+                if total <= 0.0 { return; }
+                let center_x = 76.0;
+                let center_y = f64::from(height) / 2.0;
+                let radius = 57.0;
+                let mut angle = -std::f64::consts::FRAC_PI_2;
+                for (index, (_, value)) in values.iter().enumerate() {
+                    let fraction = value.max(0.0) / total;
+                    if fraction <= 0.0 { continue; }
+                    let next = angle + fraction * std::f64::consts::TAU;
+                    let (red, green, blue) = palette[index % palette.len()];
+                    context.move_to(center_x, center_y);
+                    context.arc(center_x, center_y, radius, angle, next);
+                    context.close_path();
+                    context.set_source_rgb(red, green, blue);
+                    let _ = context.fill();
+                    angle = next;
+                }
+                context.set_source_rgb(0.20, 0.20, 0.20);
+                context.arc(center_x, center_y, 31.0, 0.0, std::f64::consts::TAU);
+                let _ = context.fill();
+                context.set_source_rgb(0.94, 0.94, 0.94);
+                context.set_font_size(11.0);
+                context.move_to(center_x - 18.0, center_y + 4.0);
+                let _ = context.show_text("SSD");
+
+                for (index, (label, value)) in values.iter().enumerate() {
+                    let y = 37.0 + index as f64 * 28.0;
+                    let (red, green, blue) = palette[index % palette.len()];
+                    context.set_source_rgb(red, green, blue);
+                    context.rectangle(155.0, y - 9.0, 9.0, 9.0);
+                    let _ = context.fill();
+                    context.set_source_rgba(0.82, 0.83, 0.85, 1.0);
+                    context.move_to(174.0, y);
+                    let _ = context.show_text(label);
+                    context.move_to((f64::from(width) - 100.0).max(260.0), y);
+                    let _ = context.show_text(&format!("{:.1}%", value / total * 100.0));
+                }
+                return;
+            }
+
+            let max_value = values.iter().map(|(_, value)| value.max(0.0)).fold(0.0_f64, f64::max).max(1.0);
+            let row_height = (f64::from(height) - 12.0) / values.len() as f64;
+            let label_width = if kind == "sensors" { 150.0 } else { 125.0 };
+            let bar_left = label_width;
+            let bar_right = (f64::from(width) - 58.0).max(bar_left + 30.0);
+            for (index, (label, value)) in values.iter().enumerate() {
+                let y = 8.0 + index as f64 * row_height;
+                let (red, green, blue) = palette[index % palette.len()];
+                context.set_source_rgba(0.72, 0.74, 0.77, 0.9);
+                context.move_to(0.0, y + row_height * 0.68);
+                let _ = context.show_text(label);
+                context.set_source_rgba(0.38, 0.40, 0.43, 0.65);
+                context.rectangle(bar_left, y + 3.0, bar_right - bar_left, 9.0);
+                let _ = context.fill();
+                context.set_source_rgb(red, green, blue);
+                context.rectangle(bar_left, y + 3.0, (bar_right - bar_left) * (value.max(0.0) / max_value).clamp(0.0, 1.0), 9.0);
+                let _ = context.fill();
+                context.set_source_rgba(0.86, 0.87, 0.89, 1.0);
+                context.move_to(bar_right + 8.0, y + row_height * 0.68);
+                let formatted = if kind == "sensors" { format!("{value:.1}°") } else { format!("{value:.2}") };
+                let _ = context.show_text(&formatted);
+            }
+        });
     }
 
     fn configure_network_chart(&self) {
@@ -755,6 +859,7 @@ fn downgrade_card(card: MetricCard) -> WeakMetricCard {
         target_usage: Rc::clone(&card.target_usage),
         animation_active: Rc::clone(&card.animation_active),
         network_history: Rc::clone(&card.network_history),
+        overview_data: Rc::clone(&card.overview_data),
         details: card.details.downgrade(),
     }
 }
@@ -769,6 +874,7 @@ struct WeakMetricCard {
     target_usage: Rc<Cell<f64>>,
     animation_active: Rc<Cell<bool>>,
     network_history: Rc<RefCell<VecDeque<(f64, f64)>>>,
+    overview_data: Rc<RefCell<Vec<(String, f64)>>>,
     details: gtk::glib::WeakRef<gtk::Box>,
 }
 
@@ -783,6 +889,7 @@ fn upgrade_card(card: &WeakMetricCard) -> Option<MetricCard> {
         target_usage: Rc::clone(&card.target_usage),
         animation_active: Rc::clone(&card.animation_active),
         network_history: Rc::clone(&card.network_history),
+        overview_data: Rc::clone(&card.overview_data),
         details: card.details.upgrade()?,
     })
 }
