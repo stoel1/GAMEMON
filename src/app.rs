@@ -85,7 +85,7 @@ impl MetricCard {
         let displayed_usage = Rc::new(Cell::new(0.0));
         let target_usage = Rc::new(Cell::new(0.0));
         let animation_active = Rc::new(Cell::new(false));
-        let network_history = Rc::new(RefCell::new(VecDeque::<(f64, f64)>::with_capacity(120)));
+        let network_history = Rc::new(RefCell::new(VecDeque::<(f64, f64)>::with_capacity(600)));
         let overview_data = Rc::new(RefCell::new(Vec::<(String, f64)>::new()));
         let chart_history = Rc::clone(&history);
         let chart_displayed = Rc::clone(&displayed_usage);
@@ -446,12 +446,12 @@ impl MetricCard {
                 let _ = context.show_text(&format!("{:.1}", scale_max * fraction));
             }
 
-            // Graph history advances at a fixed 2 Hz, independent of the sampler.
+            // Graph history advances at a fixed 10 Hz, independent of the sampler.
             let count = samples.len();
             let make_points = |series: usize| -> Vec<(f64, f64)> {
                 samples.iter().enumerate().map(|(index, (rx, tx))| {
                     let value = if series == 0 { *rx } else { *tx };
-                    let x = left + index as f64 / 119.0 * plot_width;
+                    let x = left + index as f64 / 599.0 * plot_width;
                     let y = bottom - (value / scale_max).clamp(0.0, 1.0) * plot_height;
                     (x, y)
                 }).collect()
@@ -1227,7 +1227,7 @@ fn render_snapshot(
             {
                 let mut history = network_card.network_history.borrow_mut();
                 if GRAPH_SAMPLE_DUE.with(Cell::get) {
-                    if history.len() == 120 {
+                    if history.len() == 600 {
                         history.pop_front();
                     }
                     history.push_back((
