@@ -289,6 +289,7 @@ impl MetricCard {
     }
 
     fn configure_summary_chart(&self, kind: &'static str) {
+        self.progress.set_visible(false);
         let height = match kind {
             "storage" => 170,
             "sensors" | "processes" => 145,
@@ -574,6 +575,10 @@ pub fn activate(application: &Application) {
     let (sensors_frame, sensors_card) = MetricCard::new("SENSOREN", "Temperaturen en ventilatoren");
     let (storage_frame, storage_card) = MetricCard::new("OPSLAG", "Bestandssystemen en schijfactiviteit");
     let (process_frame, process_card) = MetricCard::new("PROCESSEN", "Actieve processen · CPU en geheugen");
+    system_card.configure_summary_chart("system");
+    sensors_card.configure_summary_chart("sensors");
+    storage_card.configure_summary_chart("storage");
+    process_card.configure_summary_chart("processes");
 
     let content = gtk::Box::new(Orientation::Vertical, 18);
     content.set_margin_top(20);
@@ -1007,6 +1012,12 @@ fn render_snapshot(
     let uptime = system.uptime_seconds.map(format_uptime).unwrap_or_else(|| "Niet beschikbaar".to_owned());
     push_detail_sample(detail_charts, "system", system.load_average.map(|v| v[0]));
     let load = system.load_average.map(|values| format!("{:.2} · {:.2} · {:.2}", values[0], values[1], values[2])).unwrap_or_else(|| "Niet beschikbaar".to_owned());
+    *system_card.overview_data.borrow_mut() = system.load_average.map(|values| vec![
+        ("1 min".to_owned(), values[0]),
+        ("5 min".to_owned(), values[1]),
+        ("15 min".to_owned(), values[2]),
+    ]).unwrap_or_default();
+    if system_card.chart.is_mapped() { system_card.chart.queue_draw(); }
     set_label_text_if_changed(&system_card.primary, &uptime);
     set_label_text_if_changed(&system_card.secondary, "Systeem actief");
     set_metric_details(&system_card.details, &format!("Load average (1 / 5 / 15 min): {load}"));
@@ -1027,6 +1038,11 @@ fn render_snapshot(
             set_label_text_if_changed(&sensors_card.primary, &format!("{} fans", system.fans.len()));
             set_label_text_if_changed(&sensors_card.secondary, "Ventilatorsnelheden");
         }
+        *sensors_card.overview_data.borrow_mut() = system.temperatures.iter()
+            .take(4)
+            .map(|reading| (reading.label.clone(), reading.celsius))
+            .collect();
+        if sensors_card.chart.is_mapped() { sensors_card.chart.queue_draw(); }
         let temperatures = system.temperatures.iter().take(3).map(|reading| format!("{}: {:.1} °C", reading.label, reading.celsius)).collect::<Vec<_>>();
         let fans = system.fans.iter().take(3).map(|reading| format!("{}: {} RPM", reading.label, reading.rpm)).collect::<Vec<_>>();
         set_metric_details(&sensors_card.details, &temperatures.into_iter().chain(fans).collect::<Vec<_>>().join("\n"));
@@ -1038,6 +1054,14 @@ fn render_snapshot(
     let filesystems = &snapshot.storage.filesystems;
     let total_capacity = filesystems.iter().filter_map(|fs| fs.total_bytes).sum::<u64>();
     let total_used = filesystems.iter().filter_map(|fs| fs.used_bytes).sum::<u64>();
+    let total_free = total_capacity.saturating_sub(total_used);
+    *storage_card.overview_data.borrow_mut() = if total_capacity > 0 {
+        vec![
+            ("Gebruikt".to_owned(), total_used as f64),
+            ("Vrij".to_owned(), total_free as f64),
+        ]
+    } else { Vec::new() };
+    if storage_card.chart.is_mapped() { storage_card.chart.queue_draw(); }
     if filesystems.is_empty() {
         set_label_text_if_changed(&storage_card.primary, "Geen bestandssystemen");
         set_label_text_if_changed(&storage_card.secondary, "Opslaginformatie niet beschikbaar");
@@ -1070,6 +1094,11 @@ fn render_snapshot(
 
     let processes = &snapshot.processes.processes;
     let process_cpu = processes.iter().filter_map(|p| p.cpu_percent).sum::<f64>();
+    *process_card.overview_data.borrow_mut() = processes.iter()
+        .filter_map(|process| process.cpu_percent.map(|cpu| (process.name.clone(), cpu)))
+        .take(4)
+        .collect();
+    if process_card.chart.is_mapped() { process_card.chart.queue_draw(); }
     push_detail_sample(detail_charts, "processes", Some(process_cpu));
     set_label_text_if_changed(&process_card.primary, &format!("{} processen", processes.len()));
     set_label_text_if_changed(&process_card.secondary, "Gerangschikt op CPU-gebruik");
