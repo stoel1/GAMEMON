@@ -348,6 +348,10 @@ pub fn activate(application: &Application) {
     // which created large blank areas below shorter cards.
     let dashboard = gtk::Box::new(Orientation::Horizontal, 16);
     dashboard.set_hexpand(true);
+    // Keep both dashboard columns exactly the same width. Without a homogeneous
+    // allocation, changing label/chart natural widths can make GTK redistribute
+    // horizontal space between the columns during telemetry updates.
+    dashboard.set_homogeneous(true);
     let left_column = gtk::Box::new(Orientation::Vertical, 16);
     left_column.set_hexpand(true);
     left_column.set_valign(Align::Start);
