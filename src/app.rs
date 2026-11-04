@@ -5,7 +5,7 @@ use adw::{Application, ApplicationWindow, HeaderBar, ToolbarView};
 use gtk::{Align, Orientation};
 
 use crate::{
-    collectors::cpu,
+    collectors::{cpu, storage},
     core::{
         config::AppConfig,
         sampler::{self, MonitorSnapshot, SamplerConfig},
@@ -1356,7 +1356,6 @@ fn set_storage_detail(container: &gtk::Box, storage: &storage::StorageSnapshot) 
 
             let used = filesystem.used_bytes.unwrap_or(0);
             let total = filesystem.total_bytes.unwrap_or(0);
-            let available = filesystem.available_bytes.unwrap_or(0);
             let fraction = if total > 0 { (used as f64 / total as f64).clamp(0.0, 1.0) } else { 0.0 };
             let usage = gtk::ProgressBar::new();
             usage.set_fraction(fraction);
