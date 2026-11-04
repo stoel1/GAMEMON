@@ -22,6 +22,7 @@ struct MetricCard {
     displayed_usage: Rc<Cell<f64>>,
     target_usage: Rc<Cell<f64>>,
     animation_active: Rc<Cell<bool>>,
+    network_history: Rc<RefCell<VecDeque<(f64, f64)>>>,
     chart: gtk::DrawingArea,
     details: gtk::Box,
 }
@@ -77,6 +78,7 @@ impl MetricCard {
         let displayed_usage = Rc::new(Cell::new(0.0));
         let target_usage = Rc::new(Cell::new(0.0));
         let animation_active = Rc::new(Cell::new(false));
+        let network_history = Rc::new(RefCell::new(VecDeque::<(f64, f64)>::with_capacity(600)));
         let chart_history = Rc::clone(&history);
         let chart_displayed = Rc::clone(&displayed_usage);
         chart.set_draw_func(move |_, context, width, height| {
@@ -265,10 +267,121 @@ impl MetricCard {
                 displayed_usage,
                 target_usage,
                 animation_active,
+                network_history,
                 chart,
                 details,
             },
         )
+    }
+
+    fn configure_network_chart(&self) {
+        self.progress.set_visible(false);
+        self.chart.set_vexpand(true);
+        self.chart.set_content_height(190);
+        self.chart.set_size_request(-1, 170);
+        if let Some(parent) = self.chart.parent() {
+            parent.set_vexpand(true);
+        }
+
+        let history = Rc::clone(&self.network_history);
+        self.chart.set_draw_func(move |_, context, width, height| {
+            if width < 120 || height < 90 {
+                return;
+            }
+            let samples = history.borrow();
+            if samples.is_empty() {
+                return;
+            }
+
+            let width = f64::from(width);
+            let height = f64::from(height);
+            let left = 58.0;
+            let right = width - 12.0;
+            let top = 30.0;
+            let bottom = height - 22.0;
+            let plot_width = right - left;
+            let plot_height = bottom - top;
+            if plot_width <= 1.0 || plot_height <= 1.0 {
+                return;
+            }
+
+            let peak = samples.iter()
+                .map(|(rx, tx)| rx.max(*tx))
+                .fold(0.0_f64, f64::max);
+            let scale_max = if peak < 1.0 { 1.0 } else {
+                let raw = peak * 1.15;
+                let magnitude = 10_f64.powf(raw.log10().floor());
+                (raw / magnitude).ceil() * magnitude
+            };
+
+            context.select_font_face("Sans", gtk::cairo::FontSlant::Normal, gtk::cairo::FontWeight::Normal);
+            context.set_font_size(10.0);
+            for tick in 0..=3 {
+                let fraction = tick as f64 / 3.0;
+                let y = bottom - fraction * plot_height;
+                context.set_line_width(1.0);
+                context.set_source_rgba(0.65, 0.68, 0.72, 0.18);
+                context.move_to(left, y);
+                context.line_to(right, y);
+                let _ = context.stroke();
+
+                context.set_source_rgba(0.72, 0.74, 0.77, 0.78);
+                context.move_to(2.0, y + 3.5);
+                let _ = context.show_text(&format!("{:.1}", scale_max * fraction));
+            }
+
+            // The history is sampled at 10 Hz; retain 600 points for a rolling
+            // 60-second window and spread the samples across the whole plot.
+            let count = samples.len();
+            let make_points = |series: usize| -> Vec<(f64, f64)> {
+                samples.iter().enumerate().map(|(index, (rx, tx))| {
+                    let value = if series == 0 { *rx } else { *tx };
+                    let x = left + index as f64 / 599.0 * plot_width;
+                    let y = bottom - (value / scale_max).clamp(0.0, 1.0) * plot_height;
+                    (x, y)
+                }).collect()
+            };
+
+            let draw_series = |points: &[(f64, f64)], red: f64, green: f64, blue: f64| {
+                if points.is_empty() { return; }
+                context.move_to(points[0].0, bottom);
+                context.line_to(points[0].0, points[0].1);
+                append_smooth_line(context, points);
+                context.line_to(points.last().unwrap().0, bottom);
+                context.close_path();
+                context.set_source_rgba(red, green, blue, 0.10);
+                let _ = context.fill();
+
+                context.move_to(points[0].0, points[0].1);
+                append_smooth_line(context, points);
+                context.set_line_width(2.2);
+                context.set_line_cap(gtk::cairo::LineCap::Round);
+                context.set_line_join(gtk::cairo::LineJoin::Round);
+                context.set_source_rgba(red, green, blue, 0.95);
+                let _ = context.stroke();
+            };
+
+            let download = make_points(0);
+            let upload = make_points(1);
+            draw_series(&download, 0.26, 0.72, 0.96);
+            draw_series(&upload, 0.25, 0.82, 0.58);
+
+            // Compact legend and rolling-window labels.
+            context.set_font_size(11.0);
+            context.set_source_rgba(0.26, 0.72, 0.96, 1.0);
+            context.move_to(left, 14.0);
+            let _ = context.show_text("↓ DOWNLOAD");
+            context.set_source_rgba(0.25, 0.82, 0.58, 1.0);
+            context.move_to(left + 105.0, 14.0);
+            let _ = context.show_text("↑ UPLOAD");
+            context.set_font_size(10.0);
+            context.set_source_rgba(0.72, 0.74, 0.77, 0.78);
+            context.move_to(left, height - 4.0);
+            let _ = context.show_text("60 seconden geleden");
+            context.move_to(right - 18.0, height - 4.0);
+            let _ = context.show_text("nu");
+            let _ = count;
+        });
     }
 
     fn start_animation_if_needed(&self) {
@@ -352,6 +465,7 @@ pub fn activate(application: &Application) {
     let (gpu_frame, gpu_card) = MetricCard::new("GRAPHICS", "Grafische processor");
     let (memory_frame, memory_card) = MetricCard::new("GEHEUGEN", "RAM-gebruik");
     let (network_frame, network_card) = MetricCard::new("NETWERK", "Actuele netwerkdoorvoer");
+    network_card.configure_network_chart();
     let (system_frame, system_card) = MetricCard::new("SYSTEEM", "Uptime en load average");
     let (sensors_frame, sensors_card) = MetricCard::new("SENSOREN", "Temperaturen en ventilatoren");
     let (storage_frame, storage_card) = MetricCard::new("OPSLAG", "Bestandssystemen en schijfactiviteit");
@@ -640,6 +754,7 @@ fn downgrade_card(card: MetricCard) -> WeakMetricCard {
         displayed_usage: Rc::clone(&card.displayed_usage),
         target_usage: Rc::clone(&card.target_usage),
         animation_active: Rc::clone(&card.animation_active),
+        network_history: Rc::clone(&card.network_history),
         details: card.details.downgrade(),
     }
 }
@@ -653,6 +768,7 @@ struct WeakMetricCard {
     displayed_usage: Rc<Cell<f64>>,
     target_usage: Rc<Cell<f64>>,
     animation_active: Rc<Cell<bool>>,
+    network_history: Rc<RefCell<VecDeque<(f64, f64)>>>,
     details: gtk::glib::WeakRef<gtk::Box>,
 }
 
@@ -666,6 +782,7 @@ fn upgrade_card(card: &WeakMetricCard) -> Option<MetricCard> {
         displayed_usage: Rc::clone(&card.displayed_usage),
         target_usage: Rc::clone(&card.target_usage),
         animation_active: Rc::clone(&card.animation_active),
+        network_history: Rc::clone(&card.network_history),
         details: card.details.upgrade()?,
     })
 }
@@ -871,6 +988,19 @@ fn render_snapshot(
             let active = network.interfaces.iter().filter(|interface| interface.carrier == Some(true) || interface.operational_state.as_deref() == Some("up")).collect::<Vec<_>>();
             let rx = active.iter().filter_map(|interface| interface.rx_bytes_per_second).sum::<f64>();
             let tx = active.iter().filter_map(|interface| interface.tx_bytes_per_second).sum::<f64>();
+            {
+                let mut history = network_card.network_history.borrow_mut();
+                if history.len() == 600 {
+                    history.pop_front();
+                }
+                history.push_back((
+                    rx.max(0.0) * 8.0 / 1_000_000.0,
+                    tx.max(0.0) * 8.0 / 1_000_000.0,
+                ));
+            }
+            if network_card.chart.is_mapped() {
+                network_card.chart.queue_draw();
+            }
             set_label_text_if_changed(
                 &network_card.primary,
                 &format!("↓ {}  ↑ {}", format_rate(rx), format_rate(tx)),
@@ -882,12 +1012,14 @@ fn render_snapshot(
             network_card.set_usage(None);
         }
         Some(_) => {
+            network_card.network_history.borrow_mut().push_back((0.0, 0.0));
             set_label_text_if_changed(&network_card.primary, "Geen interfaces");
             set_label_text_if_changed(&network_card.secondary, "Geen netwerkinterfaces gevonden");
             set_metric_details(&network_card.details, "Netwerkdetails zijn niet beschikbaar.");
             network_card.set_usage(None);
         }
         None => {
+            network_card.network_history.borrow_mut().push_back((0.0, 0.0));
             set_label_text_if_changed(&network_card.primary, "N/B");
             set_label_text_if_changed(&network_card.secondary, "Netwerktelemetrie niet beschikbaar");
             set_metric_details(&network_card.details, "Er kon geen netwerk-informatie worden verzameld.");
