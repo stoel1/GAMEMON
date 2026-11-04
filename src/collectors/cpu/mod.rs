@@ -109,14 +109,23 @@ impl CpuCollector {
                     topology.core_id = topology.core_id.or(discovered.core_id);
                     topology.core_type = topology.core_type.or(discovered.core_type);
                 }
-                if topology.core_type.is_none() {
-                    if let (Some(cpu_max), Some(highest), Some(lowest)) =
-                        (read_max_frequency(id), max_cpu_frequency, min_cpu_frequency)
-                    {
-                        if highest > lowest {
-                            topology.core_type = Some(if cpu_max == highest { 2 } else { 1 });
-                        }
+                // Prefer the cpufreq limits when they clearly identify hybrid
+                // core classes. Some kernels expose core_type as 0 (unknown),
+                // which must not block this fallback.
+                if let (Some(cpu_max), Some(highest), Some(lowest)) =
+                    (read_max_frequency(id), max_cpu_frequency, min_cpu_frequency)
+                {
+                    if highest > lowest {
+                        topology.core_type = if cpu_max == highest {
+                            Some(2) // Performance / P-core
+                        } else if cpu_max == lowest {
+                            Some(1) // Efficiency / E-core
+                        } else {
+                            topology.core_type.filter(|kind| matches!(kind, 1 | 2))
+                        };
                     }
+                } else {
+                    topology.core_type = topology.core_type.filter(|kind| matches!(kind, 1 | 2));
                 }
                 let topology = *topology;
                 let cpu_utilization = match stats.logical_cpus.get(&id).copied() {
