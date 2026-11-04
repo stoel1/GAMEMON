@@ -306,7 +306,7 @@ impl MetricCard {
             }
 
             let peak = samples.iter()
-                .map(|(rx, tx)| rx.max(*tx))
+                .map(|(rx, tx)| (*rx).max(*tx))
                 .fold(0.0_f64, f64::max);
             let scale_max = if peak < 1.0 { 1.0 } else {
                 let raw = peak * 1.15;
@@ -1012,14 +1012,22 @@ fn render_snapshot(
             network_card.set_usage(None);
         }
         Some(_) => {
-            network_card.network_history.borrow_mut().push_back((0.0, 0.0));
+            {
+                let mut history = network_card.network_history.borrow_mut();
+                if history.len() == 600 { history.pop_front(); }
+                history.push_back((0.0, 0.0));
+            }
             set_label_text_if_changed(&network_card.primary, "Geen interfaces");
             set_label_text_if_changed(&network_card.secondary, "Geen netwerkinterfaces gevonden");
             set_metric_details(&network_card.details, "Netwerkdetails zijn niet beschikbaar.");
             network_card.set_usage(None);
         }
         None => {
-            network_card.network_history.borrow_mut().push_back((0.0, 0.0));
+            {
+                let mut history = network_card.network_history.borrow_mut();
+                if history.len() == 600 { history.pop_front(); }
+                history.push_back((0.0, 0.0));
+            }
             set_label_text_if_changed(&network_card.primary, "N/B");
             set_label_text_if_changed(&network_card.secondary, "Netwerktelemetrie niet beschikbaar");
             set_metric_details(&network_card.details, "Er kon geen netwerk-informatie worden verzameld.");
