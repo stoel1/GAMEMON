@@ -1248,26 +1248,11 @@ fn render_snapshot(
         if fan_text.is_empty() { "Geen ventilatormetingen beschikbaar" } else { &fan_text }
     ));
 
-    let filesystem_text = snapshot.storage.filesystems.iter().map(|fs| format!(
-        "{}: {} · gebruikt {} / {} · beschikbaar {}",
-        fs.mountpoint, fs.filesystem,
-        fs.used_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
-        fs.total_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
-        fs.available_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned())
-    )).collect::<Vec<_>>().join("\n");
-    let disk_text = snapshot.storage.devices.iter().map(|d| format!(
-        "{}: lezen {} · schrijven {} · reads {} · writes {}",
-        d.name,
-        d.read_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()),
-        d.write_bytes_per_second.map(format_rate).unwrap_or_else(|| "N/B".to_owned()),
-        d.reads_completed.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned()),
-        d.writes_completed.map(|v| v.to_string()).unwrap_or_else(|| "N/B".to_owned())
-    )).collect::<Vec<_>>().join("\n");
-    set_detail_if_visible(detail_labels, detail_expanded, visible_page, "storage", &format!(
-        "# Bestandssystemen\n{}\n\n# Schijfactiviteit\n{}",
-        if filesystem_text.is_empty() { "Geen bestandssystemen gevonden" } else { &filesystem_text },
-        if disk_text.is_empty() { "Geen schijfstatistieken beschikbaar" } else { &disk_text }
-    ));
+    if visible_page == "storage" {
+        if let Some(container) = detail_labels.get("storage") {
+            set_storage_detail(container, &snapshot.storage);
+        }
+    }
 
     let process_text = snapshot.processes.processes.iter().map(|p| format!(
         "PID {} · {}: CPU {} · RAM {} · status {}",
@@ -1304,6 +1289,133 @@ fn render_snapshot(
 
 
 
+
+
+fn storage_section(title: &str) -> (gtk::Frame, gtk::Box) {
+    let frame = gtk::Frame::new(None);
+    frame.add_css_class("card");
+    frame.set_hexpand(true);
+    let content = gtk::Box::new(Orientation::Vertical, 10);
+    content.set_margin_top(14);
+    content.set_margin_bottom(14);
+    content.set_margin_start(16);
+    content.set_margin_end(16);
+    let heading = gtk::Label::new(Some(title));
+    heading.set_halign(Align::Start);
+    heading.add_css_class("title-3");
+    content.append(&heading);
+    frame.set_child(Some(&content));
+    (frame, content)
+}
+
+fn storage_table_label(text: &str, width: i32, align: Align, strong: bool) -> gtk::Label {
+    let label = gtk::Label::new(Some(text));
+    label.set_width_chars(width);
+    label.set_max_width_chars(width);
+    label.set_halign(align);
+    label.set_xalign(if align == Align::End { 1.0 } else { 0.0 });
+    label.set_single_line_mode(true);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_selectable(true);
+    if strong { label.add_css_class("heading"); }
+    label
+}
+
+fn set_storage_detail(container: &gtk::Box, storage: &storage::StorageSnapshot) {
+    while let Some(child) = container.first_child() {
+        container.remove(&child);
+    }
+
+    let (filesystem_frame, filesystem_content) = storage_section("Bestandssystemen");
+    if storage.filesystems.is_empty() {
+        let empty = gtk::Label::new(Some("Geen bestandssystemen gevonden"));
+        empty.set_halign(Align::Start);
+        empty.add_css_class("dim-label");
+        filesystem_content.append(&empty);
+    } else {
+        for filesystem in &storage.filesystems {
+            let row = gtk::Box::new(Orientation::Vertical, 5);
+            row.set_hexpand(true);
+            let top = gtk::Box::new(Orientation::Horizontal, 12);
+            let mount = gtk::Label::new(Some(&filesystem.mountpoint));
+            mount.set_halign(Align::Start);
+            mount.set_hexpand(true);
+            mount.set_xalign(0.0);
+            mount.add_css_class("heading");
+            let fs_type = gtk::Label::new(Some(&filesystem.filesystem));
+            fs_type.add_css_class("dim-label");
+            let device = gtk::Label::new(Some(&filesystem.device));
+            device.add_css_class("dim-label");
+            device.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+            device.set_max_width_chars(34);
+            device.set_tooltip_text(Some(&filesystem.device));
+            top.append(&mount);
+            top.append(&fs_type);
+            top.append(&device);
+            row.append(&top);
+
+            let used = filesystem.used_bytes.unwrap_or(0);
+            let total = filesystem.total_bytes.unwrap_or(0);
+            let available = filesystem.available_bytes.unwrap_or(0);
+            let fraction = if total > 0 { (used as f64 / total as f64).clamp(0.0, 1.0) } else { 0.0 };
+            let usage = gtk::ProgressBar::new();
+            usage.set_fraction(fraction);
+            usage.set_show_text(false);
+            usage.add_css_class("gamemon-progress");
+            row.append(&usage);
+
+            let summary = gtk::Box::new(Orientation::Horizontal, 12);
+            let used_text = if filesystem.used_bytes.is_some() && filesystem.total_bytes.is_some() {
+                format!("{} gebruikt van {}", format_bytes(used), format_bytes(total))
+            } else { "Gebruik niet beschikbaar".to_owned() };
+            let used_label = gtk::Label::new(Some(&used_text));
+            used_label.set_halign(Align::Start);
+            used_label.set_hexpand(true);
+            used_label.add_css_class("dim-label");
+            let percent = if total > 0 { format!("{:.0}%", fraction * 100.0) } else { "N/B".to_owned() };
+            let percent_label = gtk::Label::new(Some(&percent));
+            percent_label.add_css_class("numeric");
+            let free_label = gtk::Label::new(Some(&format!("Vrij: {}", filesystem.available_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()))));
+            free_label.add_css_class("dim-label");
+            summary.append(&used_label);
+            summary.append(&percent_label);
+            summary.append(&free_label);
+            row.append(&summary);
+            filesystem_content.append(&row);
+        }
+    }
+    container.append(&filesystem_frame);
+
+    let (disk_frame, disk_content) = storage_section("Schijfactiviteit");
+    if storage.devices.is_empty() {
+        let empty = gtk::Label::new(Some("Geen schijfstatistieken beschikbaar"));
+        empty.set_halign(Align::Start);
+        empty.add_css_class("dim-label");
+        disk_content.append(&empty);
+    } else {
+        let header = gtk::Box::new(Orientation::Horizontal, 8);
+        header.add_css_class("dim-label");
+        header.append(&storage_table_label("Apparaat", 18, Align::Start, true));
+        header.append(&storage_table_label("Lezen", 13, Align::End, true));
+        header.append(&storage_table_label("Schrijven", 13, Align::End, true));
+        header.append(&storage_table_label("Leesbewerkingen", 16, Align::End, true));
+        header.append(&storage_table_label("Schrijfbewerkingen", 17, Align::End, true));
+        disk_content.append(&header);
+
+        for device in &storage.devices {
+            let row = gtk::Box::new(Orientation::Horizontal, 8);
+            row.set_hexpand(true);
+            row.add_css_class("gamemon-storage-row");
+            row.append(&storage_table_label(&device.name, 18, Align::Start, true));
+            row.append(&storage_table_label(&device.read_bytes_per_second.map(format_rate).unwrap_or_else(|| "—".to_owned()), 13, Align::End, false));
+            row.append(&storage_table_label(&device.write_bytes_per_second.map(format_rate).unwrap_or_else(|| "—".to_owned()), 13, Align::End, false));
+            row.append(&storage_table_label(&device.reads_completed.map(|v| format!("{v}")).unwrap_or_else(|| "—".to_owned()), 16, Align::End, false));
+            row.append(&storage_table_label(&device.writes_completed.map(|v| format!("{v}")).unwrap_or_else(|| "—".to_owned()), 17, Align::End, false));
+            disk_content.append(&row);
+        }
+    }
+    container.append(&disk_frame);
+}
 
 fn set_label_text_if_changed(label: &gtk::Label, value: &str) {
     if label.text().as_str() != value {
@@ -1380,6 +1492,13 @@ fn install_styles() {
         }
         .gamemon-section {
             padding: 4px 2px;
+        }
+        .gamemon-storage-row {
+            padding: 6px 0;
+            border-bottom: 1px solid alpha(@theme_fg_color, 0.08);
+        }
+        .gamemon-storage-row:last-child {
+            border-bottom: 0;
         }
         .gamemon-sparkline {
             min-height: 88px;
