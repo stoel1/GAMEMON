@@ -1,5 +1,5 @@
 use std::{
-    sync::{Arc, atomic::{AtomicU64, Ordering}, mpsc::{self, Receiver, SyncSender, TrySendError}},
+    sync::{Arc, Mutex, atomic::{AtomicU64, Ordering}, mpsc::{self, Receiver, SyncSender, TrySendError}},
     thread,
     time::{Duration, Instant, SystemTime},
 };
@@ -17,12 +17,18 @@ pub struct SamplerConfig {
 #[derive(Clone)]
 pub struct SamplerControl {
     interval_ms: Arc<AtomicU64>,
+    worker: Arc<Mutex<Option<thread::Thread>>>,
 }
 
 impl SamplerControl {
     pub fn set_interval(&self, interval: Duration) {
         let milliseconds = interval.as_millis().clamp(100, 60_000) as u64;
         self.interval_ms.store(milliseconds, Ordering::Relaxed);
+        if let Ok(worker) = self.worker.lock() {
+            if let Some(worker) = worker.as_ref() {
+                worker.unpark();
+            }
+        }
     }
 }
 
@@ -88,12 +94,18 @@ pub fn start(config: SamplerConfig) -> (Receiver<MonitorSnapshot>, SamplerContro
     let (sender, receiver) = mpsc::sync_channel(1);
     let initial_ms = config.interval.max(MINIMUM_INTERVAL).as_millis().clamp(100, 60_000) as u64;
     let interval_ms = Arc::new(AtomicU64::new(initial_ms));
-    let control = SamplerControl { interval_ms: Arc::clone(&interval_ms) };
-    if let Err(error) = thread::Builder::new()
+    let worker = Arc::new(Mutex::new(None));
+    let control = SamplerControl { interval_ms: Arc::clone(&interval_ms), worker: Arc::clone(&worker) };
+    match thread::Builder::new()
         .name("gamemon-sampler".to_owned())
         .spawn(move || run_sampler(sender, interval_ms))
     {
-        tracing::error!(%error, "could not start hardware sampling thread");
+        Ok(handle) => {
+            if let Ok(mut slot) = worker.lock() {
+                *slot = Some(handle.thread().clone());
+            }
+        }
+        Err(error) => tracing::error!(%error, "could not start hardware sampling thread"),
     }
     (receiver, control)
 }
@@ -108,7 +120,7 @@ fn run_sampler(sender: SyncSender<MonitorSnapshot>, interval_ms: Arc<AtomicU64>)
             Err(TrySendError::Disconnected(_)) => break,
         }
         let interval = Duration::from_millis(interval_ms.load(Ordering::Relaxed));
-        thread::sleep(interval.saturating_sub(cycle_started.elapsed()));
+        thread::park_timeout(interval.saturating_sub(cycle_started.elapsed()));
     }
 }
 
