@@ -7,6 +7,7 @@ use std::{
 use crate::collectors::{cpu, gpu, memory, network, process, storage, system};
 
 const MINIMUM_INTERVAL: Duration = Duration::from_millis(100);
+const PROCESS_SAMPLE_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy)]
 pub struct SamplerConfig {
@@ -40,6 +41,8 @@ struct Collectors {
     network: network::NetworkCollector,
     storage: storage::StorageCollector,
     processes: process::ProcessCollector,
+    last_process_sample: Option<Instant>,
+    process_snapshot: process::ProcessListSnapshot,
 }
 
 impl Collectors {
@@ -50,7 +53,12 @@ impl Collectors {
         let network = self.network.sample();
         let system = system::sample();
         let storage = self.storage.sample();
-        let processes = self.processes.sample();
+        let now = Instant::now();
+        if self.last_process_sample.is_none_or(|last| now.duration_since(last) >= PROCESS_SAMPLE_INTERVAL) {
+            self.process_snapshot = self.processes.sample();
+            self.last_process_sample = Some(now);
+        }
+        let processes = self.process_snapshot.clone();
         MonitorSnapshot {
             sampled_at: SystemTime::now(),
             cpu,
