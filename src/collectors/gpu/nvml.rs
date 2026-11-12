@@ -201,7 +201,7 @@ impl NvmlApi {
 
     fn query_string(&self, function: Option<GetName>, device: Device, buffer_length: usize) -> Option<String> {
         let function = function?;
-        let mut buffer = vec![0_i8; buffer_length];
+        let mut buffer = vec![0 as c_char; buffer_length];
         if unsafe { function(device, buffer.as_mut_ptr(), buffer.len() as c_uint) } != NVML_SUCCESS {
             return None;
         }
