@@ -20,6 +20,7 @@ pub struct GpuSnapshot {
 pub struct GpuDeviceSnapshot {
     pub drm_card: Option<String>,
     pub telemetry_source: Option<&'static str>,
+    pub telemetry_status: Option<&'static str>,
     pub uuid: Option<String>,
     pub pci_address: Option<String>,
     pub vendor_id: Option<u16>,
@@ -117,10 +118,14 @@ fn discover_devices() -> Option<Vec<DiscoveredDevice>> {
         }
         let device_path = entry.path().join("device");
         if device_path.exists() {
-            devices.push(DiscoveredDevice {
-                drm_card: name,
-                device_path,
-            });
+            // The Apple display controller is a separate DRM card, not another GPU.
+            let driver = fs::read_link(device_path.join("driver"))
+                .ok()
+                .and_then(|path| path.file_name()?.to_str().map(str::to_owned));
+            if driver.as_deref() == Some("apple-drm") {
+                continue;
+            }
+            devices.push(DiscoveredDevice { drm_card: name, device_path });
         }
     }
     devices.sort_by(|left, right| left.drm_card.cmp(&right.drm_card));
@@ -140,8 +145,17 @@ fn read_device_snapshot(device: &DiscoveredDevice) -> GpuDeviceSnapshot {
     let driver = fs::read_link(device.device_path.join("driver"))
         .ok()
         .and_then(|path| path.file_name()?.to_str().map(str::to_owned));
-    let model = read_text(&device.device_path.join("product_name"))
-        .and_then(|value| valid_display_text(&value, 100));
+    let compatible = uevent.as_deref().and_then(|value| {
+        value.lines().find_map(|line| line.strip_prefix("OF_COMPATIBLE_0="))
+    });
+    let is_apple_agx = driver.as_deref() == Some("aurora")
+        && compatible == Some("apple,agx-t8140");
+    let model = if is_apple_agx {
+        Some("Apple AGX (T8140)".to_owned())
+    } else {
+        read_text(&device.device_path.join("product_name"))
+            .and_then(|value| valid_display_text(&value, 100))
+    };
     let gpu_busy_percent = read_text(&device.device_path.join("gpu_busy_percent"))
         .and_then(|value| parse_percent(&value));
     let vram_total_bytes = read_text(&device.device_path.join("mem_info_vram_total"))
@@ -153,6 +167,7 @@ fn read_device_snapshot(device: &DiscoveredDevice) -> GpuDeviceSnapshot {
     GpuDeviceSnapshot {
         drm_card: Some(device.drm_card.clone()),
         telemetry_source: None,
+        telemetry_status: is_apple_agx.then_some("Niet ondersteund"),
         uuid: None,
         pci_address,
         vendor_id,
@@ -195,6 +210,7 @@ fn merge_nvml_device(devices: &mut Vec<GpuDeviceSnapshot>, metrics: NvmlMetrics)
             devices.push(GpuDeviceSnapshot {
                 drm_card: None,
                 telemetry_source: None,
+                telemetry_status: None,
                 uuid: None,
                 pci_address: pci_address.clone(),
                 vendor_id: Some(0x10de),
