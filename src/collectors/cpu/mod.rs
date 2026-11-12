@@ -63,7 +63,8 @@ impl CpuCollector {
     pub fn sample(&mut self) -> CpuSnapshot {
         let model = fs::read_to_string("/proc/cpuinfo")
             .ok()
-            .and_then(|contents| parse_model(&contents));
+            .and_then(|contents| parse_model(&contents))
+            .or_else(read_device_tree_model);
         let online = fs::read_to_string("/sys/devices/system/cpu/online")
             .ok()
             .map(|contents| contents.trim().to_owned())
@@ -211,14 +212,24 @@ fn calculate_utilization(previous: CpuCounters, current: CpuCounters) -> Option<
 }
 
 fn parse_model(contents: &str) -> Option<String> {
-    contents
-        .lines()
-        .find_map(|line| {
-            let (key, value) = line.split_once(':')?;
-            (key.trim() == "model name").then_some(value.trim())
+    ["model name", "Model", "Hardware"]
+        .iter()
+        .find_map(|wanted| {
+            contents.lines().find_map(|line| {
+                let (key, value) = line.split_once(':')?;
+                (key.trim() == *wanted).then_some(value.trim())
+            })
         })
-        .filter(|model| !model.is_empty())
+        .filter(|model| !model.is_empty() && !model.eq_ignore_ascii_case("unknown"))
         .map(str::to_owned)
+}
+
+fn read_device_tree_model() -> Option<String> {
+    ["/sys/firmware/devicetree/base/model", "/proc/device-tree/model"]
+        .iter()
+        .find_map(|path| fs::read_to_string(path).ok())
+        .map(|model| model.trim_matches('\0').trim().to_owned())
+        .filter(|model| !model.is_empty())
 }
 
 fn parse_cpu_stat(contents: &str) -> CpuStatSnapshot {
