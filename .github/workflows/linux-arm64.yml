@@ -1,0 +1,51 @@
+name: Linux ARM64 build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - rust-rewrite
+    paths:
+      - ".github/workflows/linux-arm64.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+
+permissions:
+  contents: read
+
+jobs:
+  build-aarch64:
+    name: Build Linux ARM64 (aarch64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install GTK build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes             build-essential             pkg-config             libgtk-4-dev             libadwaita-1-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build and test
+        run: |
+          cargo test --locked
+          cargo build --release --locked
+
+      - name: Package binary
+        run: |
+          mkdir -p dist
+          cp target/release/gamemon dist/gamemon
+          cp README.md dist/README.md
+          tar -C dist -czf gamemon-linux-aarch64.tar.gz .
+
+      - name: Upload ARM64 build
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamemon-linux-aarch64
+          path: gamemon-linux-aarch64.tar.gz
+          if-no-files-found: error
+          retention-days: 30
