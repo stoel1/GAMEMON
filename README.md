@@ -34,6 +34,21 @@ GAMEMON reads `gamemon/config.toml` from `$XDG_CONFIG_HOME`, or from `~/.config`
 
 On RHEL, install matching GTK4 and libadwaita development packages from enabled repositories before building.
 
+### Linux ARM64 (Apple Silicon / aarch64)
+
+The `rust-rewrite` branch includes a GitHub Actions workflow that builds and tests
+a native Linux ARM64 binary on an ARM runner. Push changes to this branch or run
+the **Linux ARM64 build** workflow manually from the Actions tab. The resulting
+`gamemon-linux-aarch64` artifact contains the `gamemon` executable and this README.
+
+On Fedora/Aurora Linux, install the GTK runtime libraries before launching the
+binary (GTK4 and libadwaita). The build is for **Linux ARM64**, not macOS.
+
+CPU utilization and memory statistics use Linux procfs/sysfs interfaces. CPU
+model identification also checks the device tree, which is useful on ARM systems.
+Intel-specific RAPL package-power readings and GPU telemetry depend on kernel
+and driver support and may be unavailable on Apple Silicon Linux.
+
 ## Hardware validation
 
 The original development system is an Intel Core i9-13900K, ASRock Z790 LiveMixer, 48 GB DDR5 and NVIDIA GeForce RTX 5070. This hardware must not be hardcoded into collectors.
