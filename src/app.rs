@@ -1053,7 +1053,12 @@ fn render_snapshot(
             push_detail_sample(detail_charts, "gpu", usage);
             push_detail_sample(detail_charts, "gpu_power", device.power_milliwatts.map(|value| value as f64 / 1000.0));
             push_detail_sample(detail_charts, "gpu_vram", device.vram_used_bytes.map(|value| value as f64 / 1_073_741_824.0));
-            set_label_text_if_changed(&gpu_card.primary, &usage.map(|value| format!("{value:.0}%")).unwrap_or_else(|| "N/B".to_owned()));
+            let primary = if device.telemetry_status.is_some() {
+                "Niet ondersteund".to_owned()
+            } else {
+                usage.map(|value| format!("{value:.0}%")).unwrap_or_else(|| "N/B".to_owned())
+            };
+            set_label_text_if_changed(&gpu_card.primary, &primary);
             gpu_card.set_usage(usage);
             set_label_text_if_changed(&gpu_card.secondary, name);
             let vram = match (device.vram_used_bytes, device.vram_total_bytes) {
@@ -1063,7 +1068,10 @@ fn render_snapshot(
             let temperature = device.temperature_celsius.map(|value| format!("{value} °C")).unwrap_or_else(|| "N/B".to_owned());
             let power = device.power_milliwatts.map(|value| format!("{:.1} W", value as f64 / 1000.0)).unwrap_or_else(|| "N/B".to_owned());
             let clocks = device.graphics_clock_mhz.map(|value| format!("{value} MHz")).unwrap_or_else(|| "N/B".to_owned());
-            set_metric_details(&gpu_card.details, &format!("Temperatuur: {temperature} · Vermogen: {power}\n{vram} · Core clock: {clocks}\n{} GPU(s) gedetecteerd", gpu.devices.len()));
+            let telemetry_note = device.telemetry_status
+                .map(|status| format!("Telemetrie: {status} (huidige Aurora-driver)"))
+                .unwrap_or_else(|| format!("Temperatuur: {temperature} · Vermogen: {power}"));
+            set_metric_details(&gpu_card.details, &format!("{telemetry_note}\n{vram} · Core clock: {clocks}\n{} GPU(s) gedetecteerd", gpu.devices.len()));
         }
         Some(_) => {
             set_label_text_if_changed(&gpu_card.primary, "Geen GPU");
@@ -1299,6 +1307,7 @@ fn render_snapshot(
     let gpu_text = snapshot.gpu.as_ref().map(|gpu| gpu.devices.iter().enumerate().map(|(i, d)| format!(
         "# GPU {i} · {}\nGPU-belasting: {}\nGeheugenbelasting: {}\nVRAM gebruikt: {}\nVRAM totaal: {}\nTemperatuur: {}\nVermogen: {}\nVermogenslimiet: {}\nCore clock: {} MHz\nMemory clock: {} MHz\nVentilator: {}\nEncoder: {}\nDecoder: {}\n\n# Identificatie\nDRM: {}\nPCI-adres: {}\nDriver: {}\nTelemetriebron: {}\nUUID: {}",
         d.model.as_deref().unwrap_or("Onbekende GPU"),
+        d.telemetry_status.unwrap_or("Beschikbaar"),
         d.gpu_busy_percent.map(|v| format!("{v}%")).unwrap_or_else(|| "N/B".to_owned()),
         d.memory_busy_percent.map(|v| format!("{v}%")).unwrap_or_else(|| "N/B".to_owned()),
         d.vram_used_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
