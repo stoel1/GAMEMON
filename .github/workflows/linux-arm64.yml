@@ -32,8 +32,8 @@ jobs:
 
       - name: Build and test
         run: |
-          cargo test --locked
-          cargo build --release --locked
+          cargo test
+          cargo build --release
 
       - name: Package binary
         run: |
