@@ -1305,10 +1305,10 @@ fn render_snapshot(
     ));
 
     let gpu_text = snapshot.gpu.as_ref().map(|gpu| gpu.devices.iter().enumerate().map(|(i, d)| format!(
-        "# GPU {i} · {}\nGPU-belasting: {}\nGeheugenbelasting: {}\nVRAM gebruikt: {}\nVRAM totaal: {}\nTemperatuur: {}\nVermogen: {}\nVermogenslimiet: {}\nCore clock: {} MHz\nMemory clock: {} MHz\nVentilator: {}\nEncoder: {}\nDecoder: {}\n\n# Identificatie\nDRM: {}\nPCI-adres: {}\nDriver: {}\nTelemetriebron: {}\nUUID: {}",
+        "# GPU {i} · {}\nGPU-belasting: {}\nTelemetriestatus: {}\nGeheugenbelasting: {}\nVRAM gebruikt: {}\nVRAM totaal: {}\nTemperatuur: {}\nVermogen: {}\nVermogenslimiet: {}\nCore clock: {} MHz\nMemory clock: {} MHz\nVentilator: {}\nEncoder: {}\nDecoder: {}\n\n# Identificatie\nDRM: {}\nPCI-adres: {}\nDriver: {}\nTelemetriebron: {}\nUUID: {}",
         d.model.as_deref().unwrap_or("Onbekende GPU"),
-        d.telemetry_status.unwrap_or("Beschikbaar"),
         d.gpu_busy_percent.map(|v| format!("{v}%")).unwrap_or_else(|| "N/B".to_owned()),
+        d.telemetry_status.unwrap_or("Beschikbaar"),
         d.memory_busy_percent.map(|v| format!("{v}%")).unwrap_or_else(|| "N/B".to_owned()),
         d.vram_used_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
         d.vram_total_bytes.map(format_bytes).unwrap_or_else(|| "N/B".to_owned()),
