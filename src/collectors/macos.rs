@@ -422,6 +422,16 @@ pub mod process {
         }
     }
 
+    #[cfg(test)]
+    mod tests {
+        use super::ProcTaskInfo;
+
+        #[test]
+        fn proc_taskinfo_matches_the_xnu_abi_size() {
+            assert_eq!(std::mem::size_of::<ProcTaskInfo>(), 96);
+        }
+    }
+
     #[link(name = "proc")]
     unsafe extern "C" {
         fn proc_listallpids(buffer: *mut c_void, buffersize: i32) -> i32;
