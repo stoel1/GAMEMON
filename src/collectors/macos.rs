@@ -196,6 +196,20 @@ pub mod cpu {
     }
 
 
+    pub fn apply_apple_metrics(
+        snapshot: &mut CpuSnapshot,
+        metrics: Option<&super::AppleSiliconMetrics>,
+    ) {
+        if let Some(power_watts) = metrics.and_then(|value| value.cpu_power_watts) {
+            if power_watts.is_finite() && power_watts > 0.0 {
+                snapshot.package_power_domains.push(PowerDomainSnapshot {
+                    name: "CPU package".to_owned(),
+                    power_watts: Some(power_watts),
+                });
+            }
+        }
+    }
+
     fn read_processor_counters() -> Option<Vec<[u32; CPU_STATE_COUNT]>> {
         let mut processor_count = 0u32;
         let mut info: *mut i32 = std::ptr::null_mut();
