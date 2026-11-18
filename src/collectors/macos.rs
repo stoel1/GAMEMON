@@ -1,8 +1,8 @@
-//! Initial native macOS collector backend.
+//! Native macOS collector backend.
 //!
-//! Metrics are deliberately left unavailable until they can be read from a
-//! documented macOS interface. Returning None is preferable to displaying
-//! guessed or Linux-specific values.
+//! Uses Mach, sysctl, libproc and system_profiler for platform metrics, with
+//! one optional macmon sampler shared across Apple Silicon collectors. Unsupported
+//! readings remain unavailable rather than being represented as fabricated zeroes.
 
 use std::ffi::{c_char, c_void, CString};
 
