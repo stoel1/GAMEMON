@@ -6,6 +6,101 @@
 
 use std::ffi::{c_char, c_void, CString};
 
+#[cfg(target_os = "macos")]
+use std::time::{Duration, Instant};
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Default)]
+pub(crate) struct AppleSiliconMetrics {
+    pub(crate) gpu_frequency_mhz: Option<u32>,
+    pub(crate) gpu_active_ratio: Option<f32>,
+    pub(crate) gpu_power_watts: Option<f64>,
+    pub(crate) gpu_memory_in_use_bytes: Option<u64>,
+    pub(crate) gpu_temperature_celsius: Option<f64>,
+    pub(crate) cpu_power_watts: Option<f64>,
+    pub(crate) cpu_temperature_celsius: Option<f64>,
+    pub(crate) fans: Vec<(String, u64)>,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Default)]
+pub(crate) struct AppleSiliconCollector {
+    #[cfg(target_arch = "aarch64")]
+    sampler: Option<macmon::Sampler>,
+    #[cfg(target_arch = "aarch64")]
+    last_sampler_attempt: Option<Instant>,
+}
+
+#[cfg(target_os = "macos")]
+impl AppleSiliconCollector {
+    pub(crate) fn sample(&mut self) -> Option<AppleSiliconMetrics> {
+        #[cfg(target_arch = "aarch64")]
+        {
+            let now = Instant::now();
+            if self.sampler.is_none()
+                && self.last_sampler_attempt.is_none_or(|last| now.duration_since(last) >= Duration::from_secs(30))
+            {
+                self.last_sampler_attempt = Some(now);
+                self.sampler = macmon::Sampler::new().ok();
+            }
+
+            let sampler = self.sampler.as_mut()?;
+            let metrics = sampler.get_metrics_now().ok()?;
+
+            let gpu_frequency_mhz = (metrics.gpu_freq_mhz > 0).then_some(metrics.gpu_freq_mhz);
+            let cpu_has_frequency = metrics.cpu_tiers.iter().any(|tier| tier.freq_mhz > 0);
+            let gpu_temperature_celsius = metrics.temp.gpu_temp_avg
+                .filter(|value| value.is_finite() && (10.0..=150.0).contains(value))
+                .map(f64::from);
+            let cpu_temperature_celsius = metrics.temp.cpu_temp_avg
+                .filter(|value| value.is_finite() && (10.0..=150.0).contains(value))
+                .map(f64::from);
+            let cpu_power_watts = (metrics.cpu_power.is_finite() && metrics.cpu_power > 0.0)
+                .then_some(f64::from(metrics.cpu_power));
+            let gpu_power_watts = (metrics.gpu_power.is_finite() && metrics.gpu_power > 0.0)
+                .then_some(f64::from(metrics.gpu_power));
+            let gpu_active_ratio = gpu_frequency_mhz
+                .and_then(|_| valid_ratio(metrics.gpu_active_ratio));
+            let fans = metrics.fans.iter()
+                .filter(|fan| fan.rpm <= 100_000)
+                .map(|fan| (fan.name.clone(), u64::from(fan.rpm)))
+                .collect::<Vec<_>>();
+
+            let sample = AppleSiliconMetrics {
+                gpu_frequency_mhz,
+                gpu_active_ratio,
+                gpu_power_watts,
+                gpu_memory_in_use_bytes: metrics.gpu_mem_in_use,
+                gpu_temperature_celsius,
+                cpu_power_watts,
+                cpu_temperature_celsius,
+                fans,
+            };
+
+            let has_data = sample.gpu_frequency_mhz.is_some()
+                || sample.gpu_power_watts.is_some()
+                || sample.gpu_memory_in_use_bytes.is_some()
+                || sample.gpu_temperature_celsius.is_some()
+                || sample.cpu_power_watts.is_some()
+                || sample.cpu_temperature_celsius.is_some()
+                || !sample.fans.is_empty()
+                || (cpu_has_frequency && valid_ratio(metrics.cpu_active_ratio).is_some());
+
+            return has_data.then_some(sample);
+        }
+
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            None
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn valid_ratio(value: f32) -> Option<f32> {
+    (value.is_finite() && (0.0..=1.0).contains(&value)).then_some(value)
+}
+
 pub mod cpu {
     const PROCESSOR_CPU_LOAD_INFO: i32 = 2;
     const CPU_STATE_USER: usize = 0;
@@ -226,61 +321,53 @@ pub mod gpu {
     pub struct GpuCollector {
         last_scan: Option<Instant>,
         cached: Option<GpuSnapshot>,
-        #[cfg(target_arch = "aarch64")]
-        sampler: Option<macmon::Sampler>,
-        #[cfg(target_arch = "aarch64")]
-        last_sampler_attempt: Option<Instant>,
     }
 
     impl GpuCollector {
         pub fn sample(&mut self) -> Option<GpuSnapshot> {
+            self.sample_with_apple_metrics(None)
+        }
+
+        pub fn sample_with_apple_metrics(
+            &mut self,
+            apple_metrics: Option<&super::AppleSiliconMetrics>,
+        ) -> Option<GpuSnapshot> {
             let now = Instant::now();
             if self.last_scan.is_none_or(|last| now.duration_since(last) >= Duration::from_secs(30)) {
                 self.last_scan = Some(now);
                 self.cached = read_gpu_identity();
             }
 
-            #[cfg(target_arch = "aarch64")]
-            self.sample_apple_silicon();
-
-            self.cached.clone()
-        }
-
-        #[cfg(target_arch = "aarch64")]
-        fn sample_apple_silicon(&mut self) {
-            let now = Instant::now();
-            if self.sampler.is_none()
-                && self.last_sampler_attempt.is_none_or(|last| now.duration_since(last) >= Duration::from_secs(30))
-            {
-                self.last_sampler_attempt = Some(now);
-                self.sampler = macmon::Sampler::new().ok();
+            if let (Some(metrics), Some(snapshot)) = (
+                apple_metrics,
+                self.cached.as_mut().and_then(|snapshot| snapshot.devices.first_mut()),
+            ) {
+                let frequency = metrics.gpu_frequency_mhz;
+                let power = metrics.gpu_power_watts.and_then(|watts| {
+                    (watts.is_finite() && watts > 0.0 && watts <= 10_000.0)
+                        .then_some((watts * 1000.0).round() as u32)
+                });
+                let temperature = metrics.gpu_temperature_celsius.and_then(|value| {
+                    (value.is_finite() && (0.0..=150.0).contains(&value))
+                        .then_some(value.round() as u32)
+                });
+                let has_gpu_telemetry = frequency.is_some() || power.is_some()
+                    || metrics.gpu_memory_in_use_bytes.is_some() || temperature.is_some();
+                if has_gpu_telemetry {
+                    snapshot.telemetry_source = Some("IOReport/AppleSMC");
+                    snapshot.telemetry_status = Some("live");
+                    snapshot.gpu_busy_percent = metrics.gpu_active_ratio
+                        .and_then(|ratio| (ratio.is_finite() && (0.0..=1.0).contains(&ratio))
+                            .then_some((ratio * 100.0).round() as u8));
+                    snapshot.graphics_clock_mhz = frequency;
+                    snapshot.power_milliwatts = power;
+                    // Apple Silicon uses unified memory; this is GPU-attributed memory, not discrete VRAM.
+                    snapshot.vram_used_bytes = metrics.gpu_memory_in_use_bytes;
+                    snapshot.temperature_celsius = temperature;
+                }
             }
 
-            let Some(sampler) = self.sampler.as_mut() else { return; };
-            let Ok(metrics) = sampler.get_metrics_now() else { return; };
-
-            let Some(snapshot) = self.cached.as_mut()
-                .and_then(|snapshot| snapshot.devices.first_mut()) else { return; };
-
-            let frequency = (metrics.gpu_freq_mhz > 0).then_some(metrics.gpu_freq_mhz);
-            let power = watts_to_milliwatts(metrics.gpu_power);
-            let memory_in_use = metrics.gpu_mem_in_use;
-            let temperature = metrics.temp.gpu_temp_avg.and_then(celsius_to_u32);
-
-            // macmon's high-level API represents missing IOReport channels as zeroes.
-            // Do not turn an unsupported channel into a fabricated 0%/0 W reading.
-            let has_gpu_telemetry = frequency.is_some() || power.is_some()
-                || memory_in_use.is_some() || temperature.is_some();
-            if !has_gpu_telemetry { return; }
-
-            snapshot.telemetry_source = Some("IOReport/AppleSMC");
-            snapshot.telemetry_status = Some("live");
-            snapshot.gpu_busy_percent = frequency.and_then(|_| ratio_to_percent(metrics.gpu_active_ratio));
-            snapshot.graphics_clock_mhz = frequency;
-            snapshot.power_milliwatts = power;
-            // Apple Silicon uses unified memory; this is GPU-attributed memory, not discrete VRAM.
-            snapshot.vram_used_bytes = memory_in_use;
-            snapshot.temperature_celsius = temperature;
+            self.cached.clone()
         }
     }
 
@@ -391,6 +478,12 @@ pub mod system {
     #[derive(Debug, Clone)]
     pub struct FanReading { pub label: String, pub rpm: u64 }
     pub fn sample() -> SystemSnapshot {
+        sample_with_apple_metrics(None)
+    }
+
+    pub fn sample_with_apple_metrics(
+        apple_metrics: Option<&super::AppleSiliconMetrics>,
+    ) -> SystemSnapshot {
         let mut values = [0.0_f64; 3];
         let count = unsafe { libc::getloadavg(values.as_mut_ptr(), 3) };
         let boot_time = super::sysctl_timeval("kern.boottime");
@@ -399,10 +492,30 @@ pub mod system {
             let boot = std::time::Duration::new(boot.tv_sec.max(0) as u64, boot.tv_usec.max(0) as u32 * 1000);
             now.checked_sub(boot).map(|duration| duration.as_secs())
         });
+        let temperatures = apple_metrics.into_iter().flat_map(|metrics| {
+            [
+                metrics.cpu_temperature_celsius.map(|celsius| TemperatureReading {
+                    label: "CPU".to_owned(),
+                    celsius,
+                }),
+                metrics.gpu_temperature_celsius.map(|celsius| TemperatureReading {
+                    label: "GPU".to_owned(),
+                    celsius,
+                }),
+            ].into_iter().flatten()
+        }).collect();
+        let fans = apple_metrics.into_iter().flat_map(|metrics| {
+            metrics.fans.iter().map(|(label, rpm)| FanReading {
+                label: label.clone(),
+                rpm: *rpm,
+            })
+        }).collect();
+
         SystemSnapshot {
             uptime_seconds,
             load_average: (count == 3 && values.iter().all(|v| v.is_finite() && *v >= 0.0)).then_some(values),
-            ..Default::default()
+            temperatures,
+            fans,
         }
     }
 }
