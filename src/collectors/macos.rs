@@ -132,14 +132,14 @@ pub mod cpu {
             .collect::<Vec<_>>();
         unsafe {
             let byte_count = (info_count as usize).saturating_mul(std::mem::size_of::<i32>());
-            let _ = vm_deallocate(mach_task_self(), info as usize, byte_count);
+            let _ = vm_deallocate(mach_task_self_, info as usize, byte_count);
         }
         (!counters.is_empty()).then_some(counters)
     }
 
     unsafe extern "C" {
         fn mach_host_self() -> u32;
-        fn mach_task_self() -> u32;
+        static mut mach_task_self_: u32;
         fn host_processor_info(host: u32, flavor: i32, out_processor_count: *mut u32,
             out_processor_info: *mut *mut i32, out_processor_info_count: *mut u32) -> i32;
         fn vm_deallocate(target_task: u32, address: usize, size: usize) -> i32;
