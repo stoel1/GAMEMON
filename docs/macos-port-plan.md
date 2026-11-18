@@ -10,11 +10,10 @@ A source-level audit of every collector and the GUI dependency boundary is docum
 
 ## Porting strategy
 
-Keep the existing collector snapshot types and sampler/UI contract where practical, and introduce platform-specific collector implementations behind a shared interface:
+Keep the existing collector snapshot types and sampler/UI contract where practical. The current implementation selects platform-specific collector modules in `src/collectors/mod.rs`:
 
-- `src/platform/linux/`: retain the existing Linux implementations.
-- `src/platform/macos/`: implement macOS data collection.
-- `src/platform/mod.rs`: select the implementation with `cfg(target_os = ...)`.
+- `src/collectors/`: retain the existing Linux implementations unchanged.
+- `src/collectors/macos.rs`: native macOS implementations selected with `cfg(target_os = "macos")`.
 - Keep common parsing, rate calculations, history and presentation logic platform-independent.
 
 Do not report Linux-only metrics as zero on macOS. Return unavailable/unsupported values where macOS does not expose an equivalent.
@@ -29,8 +28,8 @@ Initial implementation should use documented system interfaces:
 - Filesystem capacity: `statvfs`; mounted volumes via the appropriate macOS APIs.
 - Network interfaces and byte counters: `getifaddrs` plus supported interface statistics.
 - Uptime and load averages: `sysctl` / `getloadavg`.
-- Apple Silicon GPU: use the `macmon` Rust library (MIT) as an optional Apple-Silicon-only telemetry backend. It reads GPU residency/frequency and IOReport power counters, plus GPU temperature and allocated/in-use unified memory where macOS exposes them. These rely partly on private Apple interfaces and must remain optional; failed or unsupported reads stay unavailable. GPU memory is unified system memory, not discrete VRAM.
-- Temperature, fan speed and power: investigate public IOKit/SMC interfaces. These may be unavailable on some Macs and must not be fabricated.
+- Apple Silicon sensors: use the MIT-licensed `macmon` Rust library behind an AArch64-only dependency. A single sampler is read once per monitoring cycle and its result is shared by the CPU, GPU and system collectors. The current mapping includes GPU residency/frequency, GPU power, GPU-attributed unified memory, CPU package power, CPU/GPU temperatures and available fan RPM readings. Unsupported or zero-fallback channels remain unavailable rather than being displayed as fabricated zeroes. Some readings depend on private Apple interfaces and require validation on real hardware. GPU memory is unified system memory, not discrete VRAM.
+- CPU logical-processor utilization remains sourced from Mach host processor counters. Per-core frequency and hybrid-core identity are not inferred from macmon's IOReport core IDs yet; the mapping needs validation before it can be exposed.
 
 ## GUI decision
 
@@ -47,8 +46,8 @@ Build and test both:
 
 1. Make the crate compile on macOS by isolating Linux-only modules and dependencies.
 2. Implement CPU, memory, uptime/load, process, network and filesystem collectors.
-3. Integrate Apple Silicon telemetry behind a target-specific dependency; validate IOReport/SMC availability on real hardware and keep unsupported readings unavailable.
-4. Investigate sensor telemetry and clearly mark unavailable readings.
+3. Integrate Apple Silicon telemetry behind a target-specific dependency and share one sampler across collectors; validate IOReport/SMC availability on real hardware and keep unsupported readings unavailable.
+4. Map per-core CPU frequencies and core classes only after verifying IOReport-to-Mach CPU identity on supported Apple Silicon models.
 5. Validate the GUI and decide whether a separate macOS frontend is needed.
 6. Add macOS CI builds and package a signed/notarized app only after the build is stable.
 
