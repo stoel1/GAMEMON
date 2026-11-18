@@ -223,16 +223,114 @@ pub mod system {
 }
 
 pub mod process {
+    use std::{collections::HashMap, ffi::c_void, time::Instant};
+
+    const PROC_PIDTASKINFO: i32 = 4;
+    const PROCESS_LIMIT: usize = 4096;
+
     #[derive(Debug, Clone)]
     pub struct ProcessSnapshot {
-        pub pid: u32, pub name: String, pub cpu_percent: Option<f64>,
-        pub memory_bytes: Option<u64>, pub state: Option<char>,
+        pub pid: u32,
+        pub name: String,
+        pub cpu_percent: Option<f64>,
+        pub memory_bytes: Option<u64>,
+        pub state: Option<char>,
     }
     #[derive(Debug, Clone, Default)]
     pub struct ProcessListSnapshot { pub processes: Vec<ProcessSnapshot> }
+
+    #[derive(Debug, Clone, Copy)]
+    struct PreviousSample { cpu_time_ns: u64, sampled_at: Instant }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct ProcTaskInfo {
+        virtual_size: u64,
+        resident_size: u64,
+        total_user: u64,
+        total_system: u64,
+        threads_user: u64,
+        num_running: u64,
+        priority: u64,
+        policy: u64,
+        faults: u64,
+        pageins: u64,
+        cow_faults: u64,
+        messages_sent: u64,
+        messages_received: u64,
+        syscalls_mach: u64,
+        syscalls_unix: u64,
+        context_switches: u64,
+    }
+
     #[derive(Debug, Default)]
-    pub struct ProcessCollector;
-    impl ProcessCollector { pub fn sample(&mut self) -> ProcessListSnapshot { ProcessListSnapshot::default() } }
+    pub struct ProcessCollector {
+        previous: HashMap<u32, PreviousSample>,
+        logical_cpus: f64,
+    }
+
+    impl ProcessCollector {
+        pub fn sample(&mut self) -> ProcessListSnapshot {
+            let now = Instant::now();
+            if self.logical_cpus <= 0.0 {
+                self.logical_cpus = super::sysctl_u32("hw.logicalcpu").unwrap_or(1).max(1) as f64;
+            }
+            let mut pids = vec![0_i32; PROCESS_LIMIT];
+            let count = unsafe {
+                proc_listallpids(pids.as_mut_ptr().cast(), (pids.len() * std::mem::size_of::<i32>()) as i32)
+            };
+            if count <= 0 {
+                return ProcessListSnapshot::default();
+            }
+            pids.truncate((count as usize).min(PROCESS_LIMIT));
+            let mut next = HashMap::new();
+            let mut processes = Vec::new();
+            for raw_pid in pids {
+                if raw_pid <= 0 { continue; }
+                let pid = raw_pid as u32;
+                let mut info = ProcTaskInfo::default();
+                let bytes = unsafe {
+                    proc_pidinfo(raw_pid, PROC_PIDTASKINFO, 0, (&mut info as *mut ProcTaskInfo).cast(),
+                        std::mem::size_of::<ProcTaskInfo>() as i32)
+                };
+                if bytes != std::mem::size_of::<ProcTaskInfo>() as i32 { continue; }
+                let cpu_time_ns = info.total_user.saturating_add(info.total_system);
+                let cpu_percent = self.previous.get(&pid).and_then(|old| {
+                    let delta = cpu_time_ns.checked_sub(old.cpu_time_ns)?;
+                    let elapsed_ns = now.duration_since(old.sampled_at).as_nanos() as f64;
+                    (elapsed_ns > 0.0).then_some((delta as f64 * 100.0 / elapsed_ns)
+                        .min(100.0 * self.logical_cpus))
+                });
+                next.insert(pid, PreviousSample { cpu_time_ns, sampled_at: now });
+                let mut name = [0_i8; 256];
+                let name_len = unsafe { proc_name(raw_pid, name.as_mut_ptr().cast(), name.len() as u32) };
+                let process_name = if name_len > 0 {
+                    let bytes = unsafe { std::slice::from_raw_parts(name.as_ptr().cast::<u8>(), name_len as usize) };
+                    String::from_utf8_lossy(bytes).trim_matches(char::from(0)).to_owned()
+                } else {
+                    format!("PID {pid}")
+                };
+                processes.push(ProcessSnapshot {
+                    pid,
+                    name: process_name,
+                    cpu_percent,
+                    memory_bytes: Some(info.resident_size),
+                    state: None,
+                });
+            }
+            self.previous = next;
+            processes.sort_by(|a, b| b.cpu_percent.unwrap_or(0.0).total_cmp(&a.cpu_percent.unwrap_or(0.0))
+                .then_with(|| b.memory_bytes.cmp(&a.memory_bytes)));
+            processes.truncate(30);
+            ProcessListSnapshot { processes }
+        }
+    }
+
+    unsafe extern "C" {
+        fn proc_listallpids(buffer: *mut c_void, buffersize: i32) -> i32;
+        fn proc_pidinfo(pid: i32, flavor: i32, arg: u64, buffer: *mut c_void, buffersize: i32) -> i32;
+        fn proc_name(pid: i32, buffer: *mut c_void, buffersize: u32) -> i32;
+    }
 }
 
 pub mod storage {
