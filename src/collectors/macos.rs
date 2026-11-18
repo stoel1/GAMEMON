@@ -525,7 +525,9 @@ fn sysctl_u32(name: &str) -> Option<u32> {
     let mut length = std::mem::size_of::<u32>();
     (unsafe { sysctlbyname(name.as_ptr(), (&mut value as *mut u32).cast(), &mut length, std::ptr::null_mut(), 0) } == 0
         && length == std::mem::size_of::<u32>()).then_some(value)
-}pub mod memory {
+}
+
+pub mod memory {
     #[derive(Debug, Clone, Copy, Default)]
     pub struct MemorySnapshot {
         pub total_bytes: Option<u64>, pub available_bytes: Option<u64>,
