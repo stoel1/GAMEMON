@@ -7,6 +7,10 @@ on:
     branches: [macos-port]
   workflow_dispatch:
 
+concurrency:
+  group: macos-port-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: macos-latest
@@ -24,3 +28,9 @@ jobs:
 
       - name: Check macOS target
         run: cargo check --all-targets
+
+      - name: Run tests
+        run: cargo test --all-targets
+
+      - name: Build release binary
+        run: cargo build --release
