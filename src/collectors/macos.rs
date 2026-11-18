@@ -420,6 +420,7 @@ pub mod process {
         }
     }
 
+    #[link(name = "proc")]
     unsafe extern "C" {
         fn proc_listallpids(buffer: *mut c_void, buffersize: i32) -> i32;
         fn proc_pidinfo(pid: i32, flavor: i32, arg: u64, buffer: *mut c_void, buffersize: i32) -> i32;
