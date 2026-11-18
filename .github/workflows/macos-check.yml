@@ -1,0 +1,26 @@
+name: macOS build check
+
+on:
+  push:
+    branches: [macos-port]
+  pull_request:
+    branches: [macos-port]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install GTK dependencies
+        run: |
+          brew update
+          brew install pkg-config gtk4 libadwaita
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check macOS target
+        run: cargo check --all-targets
