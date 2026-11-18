@@ -29,7 +29,7 @@ Initial implementation should use documented system interfaces:
 - Filesystem capacity: `statvfs`; mounted volumes via the appropriate macOS APIs.
 - Network interfaces and byte counters: `getifaddrs` plus supported interface statistics.
 - Uptime and load averages: `sysctl` / `getloadavg`.
-- Apple Silicon GPU: investigate Metal / IOKit telemetry; expose only metrics that can be read reliably.
+- Apple Silicon GPU: use the `macmon` Rust library (MIT) as an optional Apple-Silicon-only telemetry backend. It reads GPU residency/frequency and IOReport power counters, plus GPU temperature and allocated/in-use unified memory where macOS exposes them. These rely partly on private Apple interfaces and must remain optional; failed or unsupported reads stay unavailable. GPU memory is unified system memory, not discrete VRAM.
 - Temperature, fan speed and power: investigate public IOKit/SMC interfaces. These may be unavailable on some Macs and must not be fabricated.
 
 ## GUI decision
@@ -47,7 +47,7 @@ Build and test both:
 
 1. Make the crate compile on macOS by isolating Linux-only modules and dependencies.
 2. Implement CPU, memory, uptime/load, process, network and filesystem collectors.
-3. Add Apple Silicon GPU telemetry where reliable public APIs permit it.
+3. Integrate Apple Silicon telemetry behind a target-specific dependency; validate IOReport/SMC availability on real hardware and keep unsupported readings unavailable.
 4. Investigate sensor telemetry and clearly mark unavailable readings.
 5. Validate the GUI and decide whether a separate macOS frontend is needed.
 6. Add macOS CI builds and package a signed/notarized app only after the build is stable.
