@@ -74,7 +74,7 @@ pub mod cpu {
                             utilization: core_util,
                             package_id: Some(0),
                             core_id: Some(id as u32),
-                            core_type: core_type_for(id as u32),
+                            core_type: None,
                             current_frequency_hz: None,
                         });
                     }
@@ -101,17 +101,6 @@ pub mod cpu {
         }
     }
 
-    fn core_type_for(id: u32) -> Option<u32> {
-        let performance = super::sysctl_u32("hw.perflevel0.logicalcpu");
-        let efficiency = super::sysctl_u32("hw.perflevel1.logicalcpu");
-        match (performance, efficiency) {
-            (Some(p), Some(e)) if p > 0 && e > 0 => {
-                if id < p { Some(2) } else if id < p.saturating_add(e) { Some(1) } else { None }
-            }
-            (Some(p), _) if p > 0 => Some(2),
-            _ => None,
-        }
-    }
 
     fn read_processor_counters() -> Option<Vec<[u32; CPU_STATE_COUNT]>> {
         let mut processor_count = 0u32;
