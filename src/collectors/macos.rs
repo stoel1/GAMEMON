@@ -176,6 +176,52 @@ pub mod gpu {
         pub decoder_busy_percent: Option<u8>,
     }
 
+    fn ratio_to_percent(ratio: f32) -> Option<u8> {
+        (ratio.is_finite() && (0.0..=1.0).contains(&ratio))
+            .then_some((ratio * 100.0).round() as u8)
+    }
+
+    fn watts_to_milliwatts(watts: f32) -> Option<u32> {
+        (watts.is_finite() && watts > 0.0 && watts <= 10_000.0)
+            .then_some((watts * 1000.0).round() as u32)
+    }
+
+    fn celsius_to_u32(value: f32) -> Option<u32> {
+        (value.is_finite() && (0.0..=150.0).contains(&value))
+            .then_some(value.round() as u32)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{celsius_to_u32, ratio_to_percent, watts_to_milliwatts};
+
+        #[test]
+        fn gpu_utilization_requires_a_valid_ratio() {
+            assert_eq!(ratio_to_percent(0.0), Some(0));
+            assert_eq!(ratio_to_percent(0.456), Some(46));
+            assert_eq!(ratio_to_percent(1.0), Some(100));
+            assert_eq!(ratio_to_percent(-0.1), None);
+            assert_eq!(ratio_to_percent(1.1), None);
+            assert_eq!(ratio_to_percent(f32::NAN), None);
+        }
+
+        #[test]
+        fn gpu_power_does_not_turn_zero_or_invalid_values_into_readings() {
+            assert_eq!(watts_to_milliwatts(0.0), None);
+            assert_eq!(watts_to_milliwatts(1.25), Some(1250));
+            assert_eq!(watts_to_milliwatts(-1.0), None);
+            assert_eq!(watts_to_milliwatts(f32::INFINITY), None);
+        }
+
+        #[test]
+        fn gpu_temperature_is_bounded_and_finite() {
+            assert_eq!(celsius_to_u32(42.6), Some(43));
+            assert_eq!(celsius_to_u32(0.0), Some(0));
+            assert_eq!(celsius_to_u32(151.0), None);
+            assert_eq!(celsius_to_u32(f32::NAN), None);
+        }
+    }
+
     #[derive(Default)]
     pub struct GpuCollector {
         last_scan: Option<Instant>,
@@ -216,22 +262,10 @@ pub mod gpu {
             let Some(snapshot) = self.cached.as_mut()
                 .and_then(|snapshot| snapshot.devices.first_mut()) else { return; };
 
-            let percent = |ratio: f32| -> Option<u8> {
-                (ratio.is_finite() && (0.0..=1.0).contains(&ratio))
-                    .then_some((ratio * 100.0).round() as u8)
-            };
-            let watts_to_milliwatts = |watts: f32| -> Option<u32> {
-                (watts.is_finite() && watts >= 0.0 && watts <= 10_000.0)
-                    .then_some((watts * 1000.0).round() as u32)
-            };
-
             let frequency = (metrics.gpu_freq_mhz > 0).then_some(metrics.gpu_freq_mhz);
-            let power = (metrics.gpu_power.is_finite() && metrics.gpu_power > 0.0)
-                .then(|| watts_to_milliwatts(metrics.gpu_power)).flatten();
+            let power = watts_to_milliwatts(metrics.gpu_power);
             let memory_in_use = metrics.gpu_mem_in_use;
-            let temperature = metrics.temp.gpu_temp_avg
-                .filter(|value| value.is_finite() && (0.0..=150.0).contains(value))
-                .map(|value| value.round() as u32);
+            let temperature = metrics.temp.gpu_temp_avg.and_then(celsius_to_u32);
 
             // macmon's high-level API represents missing IOReport channels as zeroes.
             // Do not turn an unsupported channel into a fabricated 0%/0 W reading.
@@ -241,7 +275,7 @@ pub mod gpu {
 
             snapshot.telemetry_source = Some("IOReport/AppleSMC");
             snapshot.telemetry_status = Some("live");
-            snapshot.gpu_busy_percent = frequency.map(|_| percent(metrics.gpu_active_ratio)).flatten();
+            snapshot.gpu_busy_percent = frequency.and_then(|_| ratio_to_percent(metrics.gpu_active_ratio));
             snapshot.graphics_clock_mhz = frequency;
             snapshot.power_milliwatts = power;
             // Apple Silicon uses unified memory; this is GPU-attributed memory, not discrete VRAM.
