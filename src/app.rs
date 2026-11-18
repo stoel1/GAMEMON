@@ -1225,8 +1225,6 @@ fn render_snapshot(
 
     match &snapshot.network {
         Some(network) if !network.interfaces.is_empty() => {
-            let total_rate = network.interfaces.iter().filter_map(|i| i.rx_bytes_per_second).sum::<f64>()
-                + network.interfaces.iter().filter_map(|i| i.tx_bytes_per_second).sum::<f64>();
             push_detail_sample(detail_charts, "network_rx", Some(network.interfaces.iter().filter_map(|i| i.rx_bytes_per_second).sum::<f64>() / 1_048_576.0));
             push_detail_sample(detail_charts, "network_tx", Some(network.interfaces.iter().filter_map(|i| i.tx_bytes_per_second).sum::<f64>() / 1_048_576.0));
             let active = network.interfaces.iter().filter(|interface| interface.carrier == Some(true) || interface.operational_state.as_deref() == Some("up")).collect::<Vec<_>>();
@@ -1727,7 +1725,7 @@ fn set_metric_details(container: &gtk::Box, text: &str) {
 fn install_styles() {
     let Some(display) = gtk::gdk::Display::default() else { return };
     let provider = gtk::CssProvider::new();
-    provider.load_from_data(r#"
+    provider.load_from_string(r#"
         progressbar.gamemon-progress {
             min-height: 7px;
             border-radius: 999px;
