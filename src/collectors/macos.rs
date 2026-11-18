@@ -348,7 +348,7 @@ pub mod gpu {
             assert_eq!(watts_to_milliwatts(0.0), None);
             assert_eq!(watts_to_milliwatts(1.25), Some(1250));
             assert_eq!(watts_to_milliwatts(-1.0), None);
-            assert_eq!(watts_to_milliwatts(f32::INFINITY), None);
+            assert_eq!(watts_to_milliwatts(f64::INFINITY), None);
         }
 
         #[test]
@@ -356,7 +356,7 @@ pub mod gpu {
             assert_eq!(celsius_to_u32(42.6), Some(43));
             assert_eq!(celsius_to_u32(0.0), Some(0));
             assert_eq!(celsius_to_u32(151.0), None);
-            assert_eq!(celsius_to_u32(f32::NAN), None);
+            assert_eq!(celsius_to_u32(f64::NAN), None);
         }
     }
 
