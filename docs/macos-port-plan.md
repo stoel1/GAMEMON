@@ -4,6 +4,10 @@
 
 This branch is based on `rust-rewrite`. The existing application is a Rust/GTK4/libadwaita desktop app, but its collectors currently read Linux-specific interfaces such as `/proc`, `/sys`, hwmon, DRM sysfs and Linux powercap/RAPL. The application therefore does not currently build as a native macOS application.
 
+## Current audit
+
+A source-level audit of every collector and the GUI dependency boundary is documented in [macOS port audit](macos-port-audit.md). It identifies the Linux-only paths, reusable POSIX/core components, and the GTK4/libadwaita build gate.
+
 ## Porting strategy
 
 Keep the existing collector snapshot types and sampler/UI contract where practical, and introduce platform-specific collector implementations behind a shared interface:
