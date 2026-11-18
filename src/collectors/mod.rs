@@ -17,4 +17,5 @@ pub mod storage;
 mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::{cpu, gpu, memory, network, process, storage, system};
+#[cfg(target_os = "macos")]
 pub(crate) use macos::AppleSiliconCollector;
