@@ -176,10 +176,14 @@ pub mod gpu {
         pub decoder_busy_percent: Option<u8>,
     }
 
-    #[derive(Debug, Default)]
+    #[derive(Default)]
     pub struct GpuCollector {
         last_scan: Option<Instant>,
         cached: Option<GpuSnapshot>,
+        #[cfg(target_arch = "aarch64")]
+        sampler: Option<macmon::Sampler>,
+        #[cfg(target_arch = "aarch64")]
+        last_sampler_attempt: Option<Instant>,
     }
 
     impl GpuCollector {
@@ -189,7 +193,47 @@ pub mod gpu {
                 self.last_scan = Some(now);
                 self.cached = read_gpu_identity();
             }
+
+            #[cfg(target_arch = "aarch64")]
+            self.sample_apple_silicon();
+
             self.cached.clone()
+        }
+
+        #[cfg(target_arch = "aarch64")]
+        fn sample_apple_silicon(&mut self) {
+            let now = Instant::now();
+            if self.sampler.is_none()
+                && self.last_sampler_attempt.is_none_or(|last| now.duration_since(last) >= Duration::from_secs(30))
+            {
+                self.last_sampler_attempt = Some(now);
+                self.sampler = macmon::Sampler::new().ok();
+            }
+
+            let Some(sampler) = self.sampler.as_mut() else { return; };
+            let Ok(metrics) = sampler.get_metrics_now() else { return; };
+
+            let Some(snapshot) = self.cached.as_mut()
+                .and_then(|snapshot| snapshot.devices.first_mut()) else { return; };
+
+            let percent = |ratio: f32| -> Option<u8> {
+                (ratio.is_finite() && (0.0..=1.0).contains(&ratio))
+                    .then_some((ratio * 100.0).round() as u8)
+            };
+            let watts_to_milliwatts = |watts: f32| -> Option<u32> {
+                (watts.is_finite() && watts >= 0.0 && watts <= 10_000.0)
+                    .then_some((watts * 1000.0).round() as u32)
+            };
+
+            snapshot.telemetry_source = Some("IOReport/AppleSMC");
+            snapshot.telemetry_status = Some("live");
+            snapshot.gpu_busy_percent = percent(metrics.gpu_active_ratio);
+            snapshot.graphics_clock_mhz = (metrics.gpu_freq_mhz > 0).then_some(metrics.gpu_freq_mhz);
+            snapshot.power_milliwatts = watts_to_milliwatts(metrics.gpu_power);
+            snapshot.vram_used_bytes = metrics.gpu_mem_in_use;
+            snapshot.temperature_celsius = metrics.temp.gpu_temp_avg
+                .filter(|value| value.is_finite() && (0.0..=150.0).contains(value))
+                .map(|value| value.round() as u32);
         }
     }
 
