@@ -147,6 +147,8 @@ pub mod cpu {
 }
 
 pub mod gpu {
+    use std::{process::Command, time::{Duration, Instant}};
+
     #[derive(Debug, Clone, Default)]
     pub struct GpuSnapshot { pub devices: Vec<GpuDeviceSnapshot> }
     #[derive(Debug, Clone)]
@@ -162,9 +164,54 @@ pub mod gpu {
         pub fan_percent: Option<u8>, pub encoder_busy_percent: Option<u8>,
         pub decoder_busy_percent: Option<u8>,
     }
+
     #[derive(Debug, Default)]
-    pub struct GpuCollector;
-    impl GpuCollector { pub fn sample(&mut self) -> Option<GpuSnapshot> { None } }
+    pub struct GpuCollector {
+        last_scan: Option<Instant>,
+        cached: Option<GpuSnapshot>,
+    }
+
+    impl GpuCollector {
+        pub fn sample(&mut self) -> Option<GpuSnapshot> {
+            let now = Instant::now();
+            if self.last_scan.is_none_or(|last| now.duration_since(last) >= Duration::from_secs(30)) {
+                self.last_scan = Some(now);
+                self.cached = read_gpu_identity();
+            }
+            self.cached.clone()
+        }
+    }
+
+    fn read_gpu_identity() -> Option<GpuSnapshot> {
+        let output = Command::new("/usr/sbin/system_profiler")
+            .args(["SPDisplaysDataType", "-detailLevel", "mini"])
+            .env("LC_ALL", "C")
+            .output().ok()?;
+        if !output.status.success() { return None; }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut model = None;
+        for line in text.lines() {
+            let line = line.trim();
+            if let Some(value) = line.strip_prefix("Chipset Model:") {
+                let value = value.trim();
+                if !value.is_empty() { model = Some(value.to_owned()); break; }
+            }
+        }
+        let model = model?;
+        Some(GpuSnapshot {
+            devices: vec![GpuDeviceSnapshot {
+                drm_card: None,
+                telemetry_source: Some("system_profiler"),
+                telemetry_status: Some("identification-only"),
+                uuid: None, pci_address: None, vendor_id: None, device_id: None,
+                driver: Some("Metal".to_owned()), model: Some(model),
+                gpu_busy_percent: None, vram_used_bytes: None, vram_total_bytes: None,
+                memory_busy_percent: None, temperature_celsius: None, power_milliwatts: None,
+                power_limit_milliwatts: None, graphics_clock_mhz: None, memory_clock_mhz: None,
+                fan_percent: None, encoder_busy_percent: None, decoder_busy_percent: None,
+            }]
+        })
+    }
 }
 
 pub mod network {
