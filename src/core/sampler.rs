@@ -61,14 +61,30 @@ struct Collectors {
     processes: process::ProcessCollector,
     last_process_sample: Option<Instant>,
     process_snapshot: Arc<process::ProcessListSnapshot>,
+    #[cfg(target_os = "macos")]
+    apple_silicon: crate::collectors::AppleSiliconCollector,
 }
 
 impl Collectors {
     fn sample(&mut self) -> MonitorSnapshot {
-        let cpu = self.cpu.sample();
+        #[cfg(target_os = "macos")]
+        let apple_metrics = self.apple_silicon.sample();
+
+        let mut cpu = self.cpu.sample();
+        #[cfg(target_os = "macos")]
+        cpu::apply_apple_metrics(&mut cpu, apple_metrics.as_ref());
+
+        #[cfg(target_os = "macos")]
+        let gpu = self.gpu.sample_with_apple_metrics(apple_metrics.as_ref());
+        #[cfg(not(target_os = "macos"))]
         let gpu = self.gpu.sample();
+
         let memory = memory::sample();
         let network = self.network.sample();
+
+        #[cfg(target_os = "macos")]
+        let system = system::sample_with_apple_metrics(apple_metrics.as_ref());
+        #[cfg(not(target_os = "macos"))]
         let system = system::sample();
         let storage = self.storage.sample();
         let now = Instant::now();
