@@ -7,7 +7,6 @@
 use std::ffi::{c_char, c_void, CString};
 
 pub mod cpu {
-    use super::*;
     const PROCESSOR_CPU_LOAD_INFO: i32 = 2;
     const CPU_STATE_USER: usize = 0;
     const CPU_STATE_SYSTEM: usize = 1;
@@ -106,18 +105,29 @@ pub mod cpu {
         let mut processor_count = 0u32;
         let mut info: *mut i32 = std::ptr::null_mut();
         let mut info_count = 0u32;
+        let host = unsafe { mach_host_self() };
         let result = unsafe {
             host_processor_info(
-                mach_host_self(),
+                host,
                 PROCESSOR_CPU_LOAD_INFO,
                 &mut processor_count,
                 &mut info,
                 &mut info_count,
             )
         };
-        if result != 0 || info.is_null() || processor_count == 0
+        unsafe {
+            let _ = mach_port_deallocate(mach_task_self_, host);
+        }
+        if result != 0 || info.is_null() {
+            return None;
+        }
+        if processor_count == 0
             || info_count < processor_count.saturating_mul(CPU_STATE_COUNT as u32)
         {
+            unsafe {
+                let byte_count = (info_count as usize).saturating_mul(std::mem::size_of::<i32>());
+                let _ = vm_deallocate(mach_task_self_, info as usize, byte_count);
+            }
             return None;
         }
         let values = unsafe { std::slice::from_raw_parts(info, info_count as usize) };
@@ -139,6 +149,7 @@ pub mod cpu {
 
     unsafe extern "C" {
         fn mach_host_self() -> u32;
+        fn mach_port_deallocate(task: u32, name: u32) -> i32;
         static mut mach_task_self_: u32;
         fn host_processor_info(host: u32, flavor: i32, out_processor_count: *mut u32,
             out_processor_info: *mut *mut i32, out_processor_info_count: *mut u32) -> i32;
