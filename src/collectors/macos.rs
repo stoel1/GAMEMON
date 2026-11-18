@@ -225,15 +225,28 @@ pub mod gpu {
                     .then_some((watts * 1000.0).round() as u32)
             };
 
-            snapshot.telemetry_source = Some("IOReport/AppleSMC");
-            snapshot.telemetry_status = Some("live");
-            snapshot.gpu_busy_percent = percent(metrics.gpu_active_ratio);
-            snapshot.graphics_clock_mhz = (metrics.gpu_freq_mhz > 0).then_some(metrics.gpu_freq_mhz);
-            snapshot.power_milliwatts = watts_to_milliwatts(metrics.gpu_power);
-            snapshot.vram_used_bytes = metrics.gpu_mem_in_use;
-            snapshot.temperature_celsius = metrics.temp.gpu_temp_avg
+            let frequency = (metrics.gpu_freq_mhz > 0).then_some(metrics.gpu_freq_mhz);
+            let power = (metrics.gpu_power.is_finite() && metrics.gpu_power > 0.0)
+                .then(|| watts_to_milliwatts(metrics.gpu_power)).flatten();
+            let memory_in_use = metrics.gpu_mem_in_use;
+            let temperature = metrics.temp.gpu_temp_avg
                 .filter(|value| value.is_finite() && (0.0..=150.0).contains(value))
                 .map(|value| value.round() as u32);
+
+            // macmon's high-level API represents missing IOReport channels as zeroes.
+            // Do not turn an unsupported channel into a fabricated 0%/0 W reading.
+            let has_gpu_telemetry = frequency.is_some() || power.is_some()
+                || memory_in_use.is_some() || temperature.is_some();
+            if !has_gpu_telemetry { return; }
+
+            snapshot.telemetry_source = Some("IOReport/AppleSMC");
+            snapshot.telemetry_status = Some("live");
+            snapshot.gpu_busy_percent = frequency.map(|_| percent(metrics.gpu_active_ratio)).flatten();
+            snapshot.graphics_clock_mhz = frequency;
+            snapshot.power_milliwatts = power;
+            // Apple Silicon uses unified memory; this is GPU-attributed memory, not discrete VRAM.
+            snapshot.vram_used_bytes = memory_in_use;
+            snapshot.temperature_celsius = temperature;
         }
     }
 
