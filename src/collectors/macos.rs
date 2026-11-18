@@ -179,7 +179,8 @@ pub mod gpu {
 }
 
 pub mod network {
-    use std::time::Instant;
+    use std::{collections::HashMap, process::Command, time::Instant};
+
     #[derive(Debug, Clone)]
     pub struct NetworkSnapshot { pub interfaces: Vec<NetworkInterfaceSnapshot> }
     #[derive(Debug, Clone)]
@@ -190,9 +191,55 @@ pub mod network {
         pub tx_bytes_per_second: Option<f64>, pub rx_errors: Option<u64>,
         pub tx_errors: Option<u64>, pub rx_dropped: Option<u64>, pub tx_dropped: Option<u64>,
     }
+    #[derive(Debug, Clone, Copy)]
+    struct Baseline { rx: u64, tx: u64, sampled_at: Instant }
+
     #[derive(Debug, Default)]
-    pub struct NetworkCollector { _sampled_at: Option<Instant> }
-    impl NetworkCollector { pub fn sample(&mut self) -> Option<NetworkSnapshot> { None } }
+    pub struct NetworkCollector { previous: HashMap<String, Baseline> }
+
+    impl NetworkCollector {
+        pub fn sample(&mut self) -> Option<NetworkSnapshot> {
+            let output = Command::new("/usr/sbin/netstat")
+                .args(["-ibn"])
+                .env("LC_ALL", "C")
+                .output().ok()?;
+            if !output.status.success() { return None; }
+            let text = String::from_utf8_lossy(&output.stdout);
+            let now = Instant::now();
+            let mut interfaces = Vec::new();
+            let mut next = HashMap::new();
+            for line in text.lines().skip(1) {
+                let fields = line.split_whitespace().collect::<Vec<_>>();
+                if fields.len() < 11 || !fields[2].starts_with("<Link#") { continue; }
+                let name = fields[0];
+                if name.is_empty() || name.len() > 32
+                    || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b)) { continue; }
+                let (Some(rx), Some(rx_errors), Some(tx), Some(tx_errors)) = (
+                    fields[6].parse::<u64>().ok(), fields[5].parse::<u64>().ok(),
+                    fields[9].parse::<u64>().ok(), fields[8].parse::<u64>().ok()
+                ) else { continue; };
+                let baseline = self.previous.get(name).copied();
+                let (rx_rate, tx_rate) = baseline.map(|old| {
+                    let elapsed = now.duration_since(old.sampled_at).as_secs_f64();
+                    if elapsed <= 0.0 { return (None, None); }
+                    let rx_rate = rx.checked_sub(old.rx).map(|delta| delta as f64 / elapsed);
+                    let tx_rate = tx.checked_sub(old.tx).map(|delta| delta as f64 / elapsed);
+                    (rx_rate, tx_rate)
+                }).unwrap_or((None, None));
+                next.insert(name.to_owned(), Baseline { rx, tx, sampled_at: now });
+                interfaces.push(NetworkInterfaceSnapshot {
+                    name: name.to_owned(), operational_state: None, carrier: None,
+                    speed_mbps: None, duplex: None, rx_bytes: Some(rx), tx_bytes: Some(tx),
+                    rx_bytes_per_second: rx_rate, tx_bytes_per_second: tx_rate,
+                    rx_errors: Some(rx_errors), tx_errors: Some(tx_errors),
+                    rx_dropped: None, tx_dropped: None,
+                });
+            }
+            self.previous = next;
+            interfaces.sort_by(|a, b| a.name.cmp(&b.name));
+            Some(NetworkSnapshot { interfaces })
+        }
+    }
 }
 
 pub mod system {
@@ -334,6 +381,8 @@ pub mod process {
 }
 
 pub mod storage {
+    use std::{process::Command, time::{Duration, Instant}};
+
     #[derive(Debug, Clone)]
     pub struct StorageSnapshot { pub filesystems: Vec<FilesystemSnapshot>, pub devices: Vec<BlockDeviceSnapshot> }
     #[derive(Debug, Clone)]
@@ -347,11 +396,50 @@ pub mod storage {
         pub reads_completed: Option<u64>, pub writes_completed: Option<u64>,
     }
     #[derive(Debug, Default)]
-    pub struct StorageCollector;
+    pub struct StorageCollector {
+        last_filesystem_scan: Option<Instant>,
+        filesystems: Vec<FilesystemSnapshot>,
+    }
     impl StorageCollector {
         pub fn sample(&mut self) -> StorageSnapshot {
-            StorageSnapshot { filesystems: Vec::new(), devices: Vec::new() }
+            let now = Instant::now();
+            if self.last_filesystem_scan.is_none_or(|last| now.duration_since(last) >= Duration::from_secs(10)) {
+                if let Some(filesystems) = read_filesystems() {
+                    self.filesystems = filesystems;
+                    self.last_filesystem_scan = Some(now);
+                }
+            }
+            StorageSnapshot { filesystems: self.filesystems.clone(), devices: Vec::new() }
         }
+    }
+
+    fn read_filesystems() -> Option<Vec<FilesystemSnapshot>> {
+        let output = Command::new("/bin/df").args(["-kP"]).env("LC_ALL", "C").output().ok()?;
+        if !output.status.success() { return None; }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut filesystems = Vec::new();
+        for line in text.lines().skip(1) {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            if fields.len() < 6 { continue; }
+            let (Some(total), Some(used), Some(available)) = (
+                fields[1].parse::<u64>().ok(), fields[2].parse::<u64>().ok(),
+                fields[3].parse::<u64>().ok()
+            ) else { continue; };
+            let mountpoint = fields[5..].join(" ");
+            if !mountpoint.starts_with('/') { continue; }
+            let scale = 1024u64;
+            filesystems.push(FilesystemSnapshot {
+                device: fields[0].to_owned(),
+                mountpoint,
+                filesystem: "unknown".to_owned(),
+                total_bytes: total.checked_mul(scale),
+                used_bytes: used.checked_mul(scale),
+                available_bytes: available.checked_mul(scale),
+            });
+        }
+        filesystems.sort_by(|a, b| a.mountpoint.cmp(&b.mountpoint));
+        filesystems.dedup_by(|a, b| a.mountpoint == b.mountpoint);
+        Some(filesystems)
     }
 }
 
