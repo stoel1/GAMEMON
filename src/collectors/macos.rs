@@ -96,7 +96,7 @@ impl AppleSiliconCollector {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn valid_ratio(value: f32) -> Option<f32> {
     (value.is_finite() && (0.0..=1.0).contains(&value)).then_some(value)
 }
@@ -196,7 +196,7 @@ pub mod cpu {
     }
 
 
-    pub fn apply_apple_metrics(
+    pub(crate) fn apply_apple_metrics(
         snapshot: &mut CpuSnapshot,
         metrics: Option<&super::AppleSiliconMetrics>,
     ) {
@@ -319,12 +319,12 @@ pub mod gpu {
             .then_some((ratio * 100.0).round() as u8)
     }
 
-    fn watts_to_milliwatts(watts: f32) -> Option<u32> {
+    fn watts_to_milliwatts(watts: f64) -> Option<u32> {
         (watts.is_finite() && watts > 0.0 && watts <= 10_000.0)
             .then_some((watts * 1000.0).round() as u32)
     }
 
-    fn celsius_to_u32(value: f32) -> Option<u32> {
+    fn celsius_to_u32(value: f64) -> Option<u32> {
         (value.is_finite() && (0.0..=150.0).contains(&value))
             .then_some(value.round() as u32)
     }
@@ -371,7 +371,7 @@ pub mod gpu {
             self.sample_with_apple_metrics(None)
         }
 
-        pub fn sample_with_apple_metrics(
+        pub(crate) fn sample_with_apple_metrics(
             &mut self,
             apple_metrics: Option<&super::AppleSiliconMetrics>,
         ) -> Option<GpuSnapshot> {
@@ -386,22 +386,14 @@ pub mod gpu {
                 self.cached.as_mut().and_then(|snapshot| snapshot.devices.first_mut()),
             ) {
                 let frequency = metrics.gpu_frequency_mhz;
-                let power = metrics.gpu_power_watts.and_then(|watts| {
-                    (watts.is_finite() && watts > 0.0 && watts <= 10_000.0)
-                        .then_some((watts * 1000.0).round() as u32)
-                });
-                let temperature = metrics.gpu_temperature_celsius.and_then(|value| {
-                    (value.is_finite() && (0.0..=150.0).contains(&value))
-                        .then_some(value.round() as u32)
-                });
+                let power = metrics.gpu_power_watts.and_then(watts_to_milliwatts);
+                let temperature = metrics.gpu_temperature_celsius.and_then(celsius_to_u32);
                 let has_gpu_telemetry = frequency.is_some() || power.is_some()
                     || metrics.gpu_memory_in_use_bytes.is_some() || temperature.is_some();
                 if has_gpu_telemetry {
                     snapshot.telemetry_source = Some("IOReport/AppleSMC");
                     snapshot.telemetry_status = Some("live");
-                    snapshot.gpu_busy_percent = metrics.gpu_active_ratio
-                        .and_then(|ratio| (ratio.is_finite() && (0.0..=1.0).contains(&ratio))
-                            .then_some((ratio * 100.0).round() as u8));
+                    snapshot.gpu_busy_percent = metrics.gpu_active_ratio.and_then(ratio_to_percent);
                     snapshot.graphics_clock_mhz = frequency;
                     snapshot.power_milliwatts = power;
                     // Apple Silicon uses unified memory; this is GPU-attributed memory, not discrete VRAM.
@@ -524,7 +516,7 @@ pub mod system {
         sample_with_apple_metrics(None)
     }
 
-    pub fn sample_with_apple_metrics(
+    pub(crate) fn sample_with_apple_metrics(
         apple_metrics: Option<&super::AppleSiliconMetrics>,
     ) -> SystemSnapshot {
         let mut values = [0.0_f64; 3];
