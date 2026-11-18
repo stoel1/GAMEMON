@@ -17,3 +17,6 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+macmon = { version = "0.12", default-features = false }
