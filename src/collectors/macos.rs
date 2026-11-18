@@ -210,6 +210,35 @@ pub mod cpu {
         }
     }
 
+    #[cfg(test)]
+    mod apple_metrics_tests {
+        use super::*;
+
+        #[test]
+        fn cpu_package_power_is_only_added_for_a_valid_positive_reading() {
+            let mut snapshot = CpuSnapshot {
+                model: None,
+                online: None,
+                utilization: CpuUtilization::Unavailable,
+                logical_cpus: Vec::new(),
+                package_power_domains: Vec::new(),
+            };
+            apply_apple_metrics(&mut snapshot, Some(&super::super::AppleSiliconMetrics {
+                cpu_power_watts: Some(0.0),
+                ..Default::default()
+            }));
+            assert!(snapshot.package_power_domains.is_empty());
+
+            apply_apple_metrics(&mut snapshot, Some(&super::super::AppleSiliconMetrics {
+                cpu_power_watts: Some(3.75),
+                ..Default::default()
+            }));
+            assert_eq!(snapshot.package_power_domains.len(), 1);
+            assert_eq!(snapshot.package_power_domains[0].name, "CPU package");
+            assert_eq!(snapshot.package_power_domains[0].power_watts, Some(3.75));
+        }
+    }
+
     fn read_processor_counters() -> Option<Vec<[u32; CPU_STATE_COUNT]>> {
         let mut processor_count = 0u32;
         let mut info: *mut i32 = std::ptr::null_mut();
@@ -530,6 +559,30 @@ pub mod system {
             load_average: (count == 3 && values.iter().all(|v| v.is_finite() && *v >= 0.0)).then_some(values),
             temperatures,
             fans,
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn maps_available_apple_temperatures_and_fans() {
+            let metrics = super::super::AppleSiliconMetrics {
+                cpu_temperature_celsius: Some(51.5),
+                gpu_temperature_celsius: Some(47.0),
+                fans: vec![("fan0".to_owned(), 1200)],
+                ..Default::default()
+            };
+            let snapshot = sample_with_apple_metrics(Some(&metrics));
+            assert_eq!(snapshot.temperatures.len(), 2);
+            assert_eq!(snapshot.temperatures[0].label, "CPU");
+            assert_eq!(snapshot.temperatures[0].celsius, 51.5);
+            assert_eq!(snapshot.temperatures[1].label, "GPU");
+            assert_eq!(snapshot.temperatures[1].celsius, 47.0);
+            assert_eq!(snapshot.fans.len(), 1);
+            assert_eq!(snapshot.fans[0].label, "fan0");
+            assert_eq!(snapshot.fans[0].rpm, 1200);
         }
     }
 }
